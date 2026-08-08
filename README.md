@@ -1,42 +1,63 @@
-# Buku Tagihan — Panduan Membuat Versi Nyata
+# Buku Tagihan v2 — Login Resmi, Privat, Komisi Penagih
 
-Ikuti urutan ini persis. Semua bisa dikerjakan lewat browser HP/laptop, tanpa install software.
+Proyek GitHub & Vercel Anda sudah ada — cukup GANTI isi file-file di repo GitHub dengan file-file baru ini
+(hapus file lama, upload semua file dari folder ini), Vercel akan otomatis build ulang.
 
-## Bagian 1 — Buat "gudang data" online (Firebase, gratis)
+## Langkah 1 — Aktifkan Login (Firebase Authentication)
 
-1. Buka https://console.firebase.google.com, login pakai akun Google.
-2. Klik "Add project" → beri nama bebas (mis. "buku-tagihan") → lanjutkan sampai selesai (matikan Google Analytics kalau ditawarkan, tidak perlu).
-3. Di dashboard project, klik ikon "</>" (Web) untuk mendaftarkan aplikasi web → beri nama apa saja → Register app.
-4. Firebase akan menampilkan kode berisi `firebaseConfig = { apiKey: ..., authDomain: ..., ... }`. Salin semua nilai itu.
-5. Buka file `src/firebaseConfig.js` di folder ini, ganti semua nilai "GANTI..." dengan nilai yang Anda salin tadi. Simpan.
-6. Di menu kiri Firebase, klik "Firestore Database" → "Create database" → pilih "Start in test mode" → pilih lokasi server terdekat (mis. asia-southeast) → Enable.
-   - Catatan: mode "test" berarti data bisa dibaca/ditulis siapa saja yang tahu alamatnya, dan otomatis terkunci setelah 30 hari. Untuk pemakaian jangka panjang, nanti perlu diatur ulang aturan keamanannya (Firestore Rules) — bisa minta bantuan developer atau Claude Code untuk ini.
+1. Buka Firebase Console → project Anda (pts-d7256) → menu kiri "Build" atau langsung cari "Authentication".
+2. Klik "Get started".
+3. Pilih metode "Email/Password" → aktifkan (toggle) → Save.
+4. Klik tab "Users" → "Add user". Buat 5 akun:
+   - 1 untuk Admin, misal: admin@bukutagihan.com
+   - 4 untuk penagih, misal: penagih1@bukutagihan.com, penagih2@..., dst.
+   - Boleh pakai email asal apa saja (tidak harus email asli/aktif), yang penting Anda ingat kata sandinya.
+5. Setelah tiap akun dibuat, akan muncul kode acak panjang di kolom "User UID" — SALIN kode itu untuk tiap akun (akan dipakai di Langkah 2).
 
-## Bagian 2 — Unggah proyek ke GitHub
+## Langkah 2 — Daftarkan peran tiap akun (Firestore)
 
-1. Buka https://github.com, buat akun gratis kalau belum punya.
-2. Klik "+" di kanan atas → "New repository" → beri nama (mis. "buku-tagihan") → Create repository.
-3. Di halaman repo kosong, klik "uploading an existing file".
-4. Seret (drag & drop) SEMUA file dan folder dari hasil ekstrak zip ini (termasuk folder `src` dan `public`) ke halaman itu.
-5. Klik "Commit changes".
+1. Di Firebase Console, buka "Firestore Database" → tab "Data".
+2. Klik "Start collection" → Collection ID: `users` → Next.
+3. Untuk akun ADMIN: Document ID = (tempel UID admin dari Langkah 1). Tambah field:
+   - `role` (string) = `admin`
+   - `nama` (string) = nama Anda
+   → Save.
+4. Untuk TIAP akun penagih (ulangi 4 kali), klik "Add document" di collection `users`:
+   - Document ID = UID penagih tersebut
+   - field `role` (string) = `penagih`
+   - field `nama` (string) = nama penagih itu
+   → Save.
 
-## Bagian 3 — Publikasikan lewat Vercel (gratis)
+## Langkah 3 — Pasang aturan keamanan
 
-1. Buka https://vercel.com, klik "Sign up" → pilih "Continue with GitHub" supaya otomatis terhubung.
-2. Di dashboard Vercel, klik "Add New" → "Project".
-3. Pilih repository "buku-tagihan" yang tadi dibuat → klik "Import".
-4. Biarkan semua pengaturan default (Vercel otomatis mengenali ini proyek Vite) → klik "Deploy".
-5. Tunggu 1-2 menit. Setelah selesai, Vercel memberi Anda sebuah link (mis. `buku-tagihan.vercel.app`) — ini alamat website Anda yang sudah bisa diakses siapa saja.
+1. Di Firestore Database, klik tab "Rules".
+2. Hapus semua isi kotak itu, ganti dengan isi file `firestore.rules` yang ada di folder proyek ini (copy-paste semuanya).
+3. Klik "Publish".
 
-## Bagian 4 — Pakai di HP Android sebagai aplikasi
+## Langkah 4 — Upload ke GitHub & biarkan Vercel deploy otomatis
 
-1. Buka link Vercel tadi di Chrome HP Android.
-2. Ketuk menu titik tiga (⋮) di pojok kanan atas Chrome → "Add to Home screen" / "Install app".
-3. Ikon aplikasi akan muncul di layar HP seperti aplikasi biasa.
-4. Admin bisa buka link yang sama dari laptop/komputer untuk memantau lewat "website kontrol".
+1. Buka repository GitHub Anda (TAGIHAN-ONLINE) di browser.
+2. Hapus file-file lama (atau langsung upload file baru menimpa yang lama dengan nama sama — GitHub akan tanya "replace").
+3. Upload SEMUA isi folder ini (termasuk file `firestore.rules`, walau itu cuma untuk arsip/rujukan, bukan dipakai saat build).
+4. Commit changes.
+5. Vercel otomatis mendeteksi perubahan dan build ulang dalam 1-2 menit. Buka link Vercel Anda untuk lihat hasilnya.
 
-## Yang perlu diingat
+## Cara pakai sehari-hari
 
-- Semua Admin & Penagih memakai LINK YANG SAMA — peran ditentukan dari pilihan di layar awal aplikasi, bukan dari link berbeda.
-- Data tersimpan di Firebase, jadi berubah di satu HP akan langsung terlihat di HP/laptop lain yang membuka aplikasi yang sama.
-- Belum ada password sungguhan per orang — siapa pun yang tahu link bisa memilih peran apa saja. Kalau mau ditambah login aman (email + password per penagih), itu langkah pengembangan berikutnya.
+- **Admin** login pakai email/password admin → bisa tambah pelanggan baru, ubah data (nama/daerah/harga/status/assign penagih), lihat laporan lengkap per daerah, lihat komisi tiap penagih, dan buka riwayat bulan-bulan sebelumnya.
+- **Penagih** login pakai email/password masing-masing → HANYA melihat pelanggan yang ditugaskan ke mereka, dan HANYA bisa isi dropdown status bayar + keterangan. Tidak bisa ubah nama/harga/daerah, tidak bisa tambah pelanggan baru.
+- Setiap tanggal 1, sistem otomatis "mulai lembar baru" — data bulan sebelumnya tetap tersimpan selamanya dan bisa dibuka lewat tab "Riwayat Bulan" (khusus Admin). Tidak perlu reset manual.
+- Kalau seorang pelanggan ditandai "Belum Bayar — Dobel Bulan Depan", tagihannya bulan depan otomatis 2x lipat sampai dia bayar lunas.
+- Komisi penagih dihitung otomatis: Rp4.000 × jumlah pelanggan yang berhasil ditarik (cash/transfer) bulan itu.
+
+## Menambah/menghapus akun penagih di kemudian hari
+
+Ulangi Langkah 1 & 2 untuk akun baru. Untuk menonaktifkan akun, hapus/nonaktifkan user-nya di tab Authentication.
+
+## Catatan keamanan
+
+Aturan di `firestore.rules` sudah memastikan hanya akun yang login (dan terdaftar di collection `users`) yang
+bisa membaca/menulis data — orang luar tidak bisa akses sama sekali. Pembatasan "penagih hanya boleh isi
+status & keterangan" saat ini ditegakkan di tampilan aplikasi; kalau ingin penguncian lebih ketat di level
+server (menolak permintaan curang walau seseorang mengutak-atik lewat cara teknis), itu pengembangan lanjutan
+yang bisa dibantu developer atau Claude Code.

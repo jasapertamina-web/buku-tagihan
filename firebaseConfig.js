@@ -1,3 +1,5 @@
+// Config project Firebase Anda (pts-d7256). Kalau suatu saat ganti project,
+// ambil ulang dari Firebase Console -> Project settings -> General -> Your apps.
 export const firebaseConfig = {
   apiKey: "AIzaSyCDLjE4fpJLwGd_SU0Yqnm80YrWur-8eW4",
   authDomain: "pts-d7256.firebaseapp.com",
