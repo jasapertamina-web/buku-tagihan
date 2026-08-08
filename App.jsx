@@ -1,9 +1,9 @@
 import { useState, useEffect, useMemo } from "react";
 import { initializeApp } from "firebase/app";
 import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut } from "firebase/auth";
-import { getFirestore, collection, doc, getDoc, setDoc, addDoc, updateDoc, onSnapshot, query, where } from "firebase/firestore";
+import { getFirestore, collection, doc, getDoc, setDoc, addDoc, updateDoc, onSnapshot, query, where, writeBatch } from "firebase/firestore";
 import { firebaseConfig } from "./firebaseConfig";
-import { Search, Plus, X, Users, Wallet, Ban, LogOut, Loader2, Lock, Mail, Pencil, History, ShieldCheck } from "lucide-react";
+import { Search, Plus, X, Users, Wallet, Ban, LogOut, Loader2, Lock, Mail, Pencil, History, ShieldCheck, Upload } from "lucide-react";
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -215,6 +215,122 @@ function CustomerForm({ onSave, onCancel, penagihList, initial }) {
   );
 }
 
+// ---------- Import massal pelanggan (khusus Admin) ----------
+function parseBulkRows(text) {
+  return text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      // Terima paste dari Excel/Spreadsheet (pemisah TAB) atau ketik manual (pemisah koma/titik koma)
+      const cols = line.includes("\t") ? line.split("\t") : line.split(/[,;]/);
+      const [nama, daerah, harga, penagihNama] = cols.map((c) => (c || "").trim());
+      return { nama, daerah, harga, penagihNama };
+    })
+    .filter((r) => r.nama && r.daerah);
+}
+
+function BulkImportForm({ onCancel, onImported, penagihList }) {
+  const [text, setText] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [result, setResult] = useState(null);
+
+  const rows = useMemo(() => parseBulkRows(text), [text]);
+
+  const findPenagihUid = (namaPenagih) => {
+    if (!namaPenagih) return "";
+    const match = penagihList.find((p) => (p.nama || "").toLowerCase().trim() === namaPenagih.toLowerCase().trim());
+    return match ? match.uid : "";
+  };
+
+  const doImport = async () => {
+    if (rows.length === 0) return;
+    setSaving(true);
+    try {
+      // Firestore batch maksimal 500 operasi — pecah jadi beberapa batch kalau lebih banyak
+      const chunks = [];
+      for (let i = 0; i < rows.length; i += 400) chunks.push(rows.slice(i, i + 400));
+
+      let count = 0;
+      const notFoundPenagih = new Set();
+      for (const chunk of chunks) {
+        const batch = writeBatch(db);
+        chunk.forEach((r) => {
+          const uid = findPenagihUid(r.penagihNama);
+          if (r.penagihNama && !uid) notFoundPenagih.add(r.penagihNama);
+          const ref = doc(collection(db, "customers"));
+          batch.set(ref, {
+            nama: r.nama,
+            daerah: r.daerah,
+            harga: Number(String(r.harga).replace(/\D/g, "")) || 0,
+            status: "aktif",
+            penagihId: uid || "",
+            dendaBulanDepan: false,
+          });
+          count++;
+        });
+        await batch.commit();
+      }
+      setResult({ count, notFoundPenagih: [...notFoundPenagih] });
+    } catch (e) {
+      setResult({ error: e.message });
+    }
+    setSaving(false);
+  };
+
+  return (
+    <div className="fixed inset-0 z-20 flex items-end sm:items-center justify-center bg-black/30 p-0 sm:p-6">
+      <div className="w-full sm:max-w-lg bg-white rounded-t-2xl sm:rounded-2xl p-5 max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="font-semibold" style={{ color: NAVY }}>Import Pelanggan Massal</h3>
+          <button onClick={onCancel}><X size={18} color="#9CA3AF" /></button>
+        </div>
+
+        {!result && (
+          <>
+            <p className="text-xs text-gray-500 mb-2">
+              Tempel data dari Excel/Spreadsheet (kolom: <b>Nama, Daerah, Harga per bulan, Nama Penagih</b>).
+              Bisa langsung select & copy beberapa baris dari Excel lalu paste di sini. Nama penagih harus sama
+              persis dengan nama di daftar penagih (boleh dikosongkan kalau belum mau ditugaskan).
+            </p>
+            <textarea
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              placeholder={"Contoh (1 pelanggan per baris):\nAgung, PADI, 110000, bekjah\nPGD Wawan, PGD-BOKOR, 150000, mbak nurul"}
+              rows={8}
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm mb-2 outline-none resize-none font-mono"
+            />
+            <p className="text-xs text-gray-400 mb-3">{rows.length} baris terbaca sebagai pelanggan valid.</p>
+            <button onClick={doImport} disabled={saving || rows.length === 0}
+              className="w-full py-3 rounded-xl text-white font-semibold text-sm disabled:opacity-40" style={{ background: TEAL }}>
+              {saving ? "Mengimpor..." : `Import ${rows.length} Pelanggan`}
+            </button>
+          </>
+        )}
+
+        {result && !result.error && (
+          <div className="text-sm">
+            <p className="mb-2" style={{ color: TEAL }}>✔ Berhasil mengimpor {result.count} pelanggan.</p>
+            {result.notFoundPenagih.length > 0 && (
+              <p className="text-xs mb-3" style={{ color: AMBER }}>
+                Catatan: nama penagih berikut tidak ditemukan di daftar penagih, jadi pelanggan itu diimpor tanpa
+                penagih (bisa diisi manual belakangan): {result.notFoundPenagih.join(", ")}
+              </p>
+            )}
+            <button onClick={onImported} className="w-full py-3 rounded-xl text-white font-semibold text-sm" style={{ background: NAVY }}>Selesai</button>
+          </div>
+        )}
+        {result?.error && (
+          <div className="text-sm">
+            <p className="mb-3" style={{ color: AMBER }}>Gagal impor: {result.error}</p>
+            <button onClick={() => setResult(null)} className="w-full py-3 rounded-xl text-white font-semibold text-sm" style={{ background: NAVY }}>Coba Lagi</button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ---------- Panel Admin ----------
 function AdminView({ profile, customers, penagihList, onLogout }) {
   const [tab, setTab] = useState("ringkasan");
@@ -222,6 +338,7 @@ function AdminView({ profile, customers, penagihList, onLogout }) {
   const [daerahFilter, setDaerahFilter] = useState("semua");
   const [editing, setEditing] = useState(null);
   const [showForm, setShowForm] = useState(false);
+  const [showBulkImport, setShowBulkImport] = useState(false);
   const [viewMonth, setViewMonth] = useState(monthKey());
   const payments = usePayments(viewMonth);
 
@@ -316,6 +433,7 @@ function AdminView({ profile, customers, penagihList, onLogout }) {
                 <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Cari nama / daerah" className="flex-1 py-2.5 text-sm outline-none" />
               </div>
               <button onClick={() => { setEditing(null); setShowForm(true); }} className="w-10 h-10 rounded-xl flex items-center justify-center text-white" style={{ background: TEAL }}><Plus size={18} /></button>
+              <button onClick={() => setShowBulkImport(true)} className="w-10 h-10 rounded-xl flex items-center justify-center text-white" style={{ background: NAVY }} title="Import massal dari Excel"><Upload size={18} /></button>
             </div>
             <div className="flex gap-2 mb-3 overflow-x-auto">
               <button onClick={() => setDaerahFilter("semua")} className="px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap border"
@@ -402,6 +520,13 @@ function AdminView({ profile, customers, penagihList, onLogout }) {
       </div>
 
       {showForm && <CustomerForm initial={editing} penagihList={penagihList} onCancel={() => { setShowForm(false); setEditing(null); }} onSave={saveCustomer} />}
+      {showBulkImport && (
+        <BulkImportForm
+          penagihList={penagihList}
+          onCancel={() => setShowBulkImport(false)}
+          onImported={() => setShowBulkImport(false)}
+        />
+      )}
     </div>
   );
 }
@@ -463,7 +588,13 @@ function PayRow({ customer, existing, onSave }) {
 function PenagihView({ profile, uid, customers, onLogout }) {
   const month = monthKey();
   const payments = usePayments(month);
+  const [query, setQuery] = useState("");
+  const [daerahFilter, setDaerahFilter] = useState("semua");
   const mine = customers.filter((c) => c.penagihId === uid);
+  const daerahList = useMemo(() => [...new Set(mine.map((c) => c.daerah).filter(Boolean))].sort(), [mine]);
+  const filtered = mine
+    .filter((c) => (c.nama + c.daerah).toLowerCase().includes(query.toLowerCase()))
+    .filter((c) => daerahFilter === "semua" || c.daerah === daerahFilter);
   const paidMap = new Map(payments.filter((p) => p.penagihId === uid).map((p) => [p.customerId, p]));
   const berhasil = mine.filter((c) => { const p = paidMap.get(c.id); return p && (p.status === "cash" || p.status === "transfer"); }).length;
   const uang = [...paidMap.values()].filter((p) => p.status === "cash" || p.status === "transfer").reduce((s, p) => s + p.jumlah, 0);
@@ -482,13 +613,31 @@ function PenagihView({ profile, uid, customers, onLogout }) {
           <div className="rounded-2xl bg-white/10 p-3"><div className="text-white/70 text-xs mb-1">Estimasi komisi</div><div className="text-white font-mono font-semibold">{rupiah(berhasil * KOMISI_PER_PELANGGAN)}</div></div>
         </div>
       </div>
-      <div className="p-5 space-y-2">
-        {mine.map((c) => <PayRow key={c.id} customer={c} existing={paidMap.get(c.id)} onSave={save} />)}
-        {mine.length === 0 && <p className="text-xs text-gray-400 text-center py-10">Belum ada pelanggan yang ditugaskan ke Anda.</p>}
+      <div className="p-5">
+        <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-xl px-3 mb-3">
+          <Search size={15} color="#9CA3AF" />
+          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Cari nama / daerah" className="flex-1 py-2.5 text-sm outline-none" />
+        </div>
+        {daerahList.length > 1 && (
+          <div className="flex gap-2 mb-3 overflow-x-auto">
+            <button onClick={() => setDaerahFilter("semua")} className="px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap border"
+              style={daerahFilter === "semua" ? { background: NAVY, color: "white", borderColor: NAVY } : { borderColor: "#E5E7EB", color: "#6B7280" }}>Semua daerah</button>
+            {daerahList.map((d) => (
+              <button key={d} onClick={() => setDaerahFilter(d)} className="px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap border"
+                style={daerahFilter === d ? { background: NAVY, color: "white", borderColor: NAVY } : { borderColor: "#E5E7EB", color: "#6B7280" }}>{d}</button>
+            ))}
+          </div>
+        )}
+        <div className="space-y-2">
+          {filtered.map((c) => <PayRow key={c.id} customer={c} existing={paidMap.get(c.id)} onSave={save} />)}
+          {mine.length === 0 && <p className="text-xs text-gray-400 text-center py-10">Belum ada pelanggan yang ditugaskan ke Anda.</p>}
+          {mine.length > 0 && filtered.length === 0 && <p className="text-xs text-gray-400 text-center py-10">Tidak ada pelanggan ditemukan.</p>}
+        </div>
       </div>
     </div>
   );
 }
+
 
 export default function App() {
   const { user, profile, error } = useAuthProfile();
