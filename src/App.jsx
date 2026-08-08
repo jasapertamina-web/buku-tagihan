@@ -349,6 +349,13 @@ function AdminView({ profile, customers, penagihList, onLogout }) {
   const totalTransfer = payments.filter((p) => p.status === "transfer").reduce((s, p) => s + p.jumlah, 0);
   const isolirCount = customers.filter((c) => c.status === "isolir" || c.status === "off").length;
   const belumBayar = customers.filter((c) => c.status === "aktif" && !paidMap.has(c.id));
+  const belumBayarTanpaKet = customers.filter((c) => {
+    if (c.status !== "aktif") return false;
+    const pay = paidMap.get(c.id);
+    if (!pay) return true; // belum ada catatan sama sekali
+    const isBelum = pay.status === "belum" || pay.status === "belum_dobel";
+    return isBelum && !(pay.keterangan && pay.keterangan.trim());
+  });
 
   const perDaerah = useMemo(() => daerahList.map((d) => {
     const cs = customers.filter((c) => c.daerah === d);
@@ -361,8 +368,10 @@ function AdminView({ profile, customers, penagihList, onLogout }) {
     const cs = customers.filter((c) => c.penagihId === p.uid);
     const berhasil = lunas.filter((pay) => pay.penagihId === p.uid).length;
     const uang = lunas.filter((pay) => pay.penagihId === p.uid).reduce((s, pay) => s + pay.jumlah, 0);
-    return { ...p, ditugaskan: cs.length, berhasil, uang, komisi: berhasil * KOMISI_PER_PELANGGAN };
-  }), [penagihList, customers, lunas]);
+    const uangCash = payments.filter((pay) => pay.penagihId === p.uid && pay.status === "cash").reduce((s, pay) => s + pay.jumlah, 0);
+    const uangTransfer = payments.filter((pay) => pay.penagihId === p.uid && pay.status === "transfer").reduce((s, pay) => s + pay.jumlah, 0);
+    return { ...p, ditugaskan: cs.length, berhasil, uang, uangCash, uangTransfer, komisi: berhasil * KOMISI_PER_PELANGGAN };
+  }), [penagihList, customers, lunas, payments]);
 
   const filtered = customers
     .filter((c) => (c.nama + c.daerah).toLowerCase().includes(query.toLowerCase()))
@@ -400,6 +409,10 @@ function AdminView({ profile, customers, penagihList, onLogout }) {
               <StatCard icon={Wallet} label={`Pendapatan ${monthLabel(viewMonth)}`} value={rupiah(totalCash + totalTransfer)} accent={TEAL} sub={`${lunas.length} pelanggan lunas`} />
               <StatCard icon={Ban} label="Isolir / Off" value={isolirCount} accent={AMBER} />
             </div>
+            <div className="flex gap-3 flex-wrap mb-3">
+              <StatCard icon={Wallet} label="Total Cash" value={rupiah(totalCash)} accent={TEAL} sub={`${payments.filter((p) => p.status === "cash").length} pelanggan`} />
+              <StatCard icon={Wallet} label="Total Transfer" value={rupiah(totalTransfer)} accent={NAVY} sub={`${payments.filter((p) => p.status === "transfer").length} pelanggan`} />
+            </div>
             <div className="rounded-2xl bg-white border border-gray-100 p-4 mb-3">
               <div className="font-semibold text-sm mb-3" style={{ color: NAVY }}>Rincian per Daerah</div>
               <div className="space-y-2">
@@ -421,6 +434,20 @@ function AdminView({ profile, customers, penagihList, onLogout }) {
                 </div>
               ))}
               {belumBayar.length === 0 && <p className="text-xs text-gray-400">Semua pelanggan aktif sudah bayar bulan ini.</p>}
+            </div>
+            <div className="rounded-2xl bg-white border border-gray-100 p-4 mt-3">
+              <div className="font-semibold text-sm mb-1" style={{ color: NAVY }}>Belum bayar & tanpa keterangan ({belumBayarTanpaKet.length})</div>
+              <p className="text-xs text-gray-400 mb-3">Pelanggan yang belum bayar dan penagihnya belum mengisi catatan/alasan — perlu ditindaklanjuti.</p>
+              {belumBayarTanpaKet.map((c) => {
+                const p = penagihList.find((pp) => pp.uid === c.penagihId);
+                return (
+                  <div key={c.id} className="flex items-center justify-between py-2 border-b border-gray-50 last:border-0">
+                    <div><div className="text-sm font-medium" style={{ color: INK }}>{c.nama}</div><div className="text-xs text-gray-400">{c.daerah} · Penagih: {p?.nama || "-"}</div></div>
+                    <div className="text-xs font-mono" style={{ color: AMBER }}>{rupiah(effectiveTagihan(c))}</div>
+                  </div>
+                );
+              })}
+              {belumBayarTanpaKet.length === 0 && <p className="text-xs text-gray-400">Semua pelanggan yang belum bayar sudah punya keterangan.</p>}
             </div>
           </>
         )}
@@ -480,6 +507,14 @@ function AdminView({ profile, customers, penagihList, onLogout }) {
                   <span className="font-mono font-semibold" style={{ color: TEAL }}>{p.berhasil} pelanggan</span>
                 </div>
                 <div className="flex items-center justify-between text-xs mb-1">
+                  <span className="text-gray-400">Cash</span>
+                  <span className="font-mono font-semibold" style={{ color: TEAL }}>{rupiah(p.uangCash)}</span>
+                </div>
+                <div className="flex items-center justify-between text-xs mb-1">
+                  <span className="text-gray-400">Transfer</span>
+                  <span className="font-mono font-semibold" style={{ color: NAVY }}>{rupiah(p.uangTransfer)}</span>
+                </div>
+                <div className="flex items-center justify-between text-xs mb-1">
                   <span className="text-gray-400">Total uang dikumpulkan</span>
                   <span className="font-mono font-semibold" style={{ color: NAVY }}>{rupiah(p.uang)}</span>
                 </div>
@@ -503,6 +538,10 @@ function AdminView({ profile, customers, penagihList, onLogout }) {
             <div className="flex gap-3 flex-wrap mb-3">
               <StatCard icon={Wallet} label={`Pendapatan ${monthLabel(viewMonth)}`} value={rupiah(totalCash + totalTransfer)} accent={TEAL} />
               <StatCard icon={Users} label="Lunas" value={`${lunas.length}/${customers.length}`} />
+            </div>
+            <div className="flex gap-3 flex-wrap mb-3">
+              <StatCard icon={Wallet} label="Total Cash" value={rupiah(totalCash)} accent={TEAL} />
+              <StatCard icon={Wallet} label="Total Transfer" value={rupiah(totalTransfer)} accent={NAVY} />
             </div>
             <div className="rounded-2xl bg-white border border-gray-100 p-4">
               <div className="font-semibold text-sm mb-3" style={{ color: NAVY }}>Rincian per Daerah — {monthLabel(viewMonth)}</div>
@@ -597,7 +636,15 @@ function PenagihView({ profile, uid, customers, onLogout }) {
     .filter((c) => daerahFilter === "semua" || c.daerah === daerahFilter);
   const paidMap = new Map(payments.filter((p) => p.penagihId === uid).map((p) => [p.customerId, p]));
   const berhasil = mine.filter((c) => { const p = paidMap.get(c.id); return p && (p.status === "cash" || p.status === "transfer"); }).length;
-  const uang = [...paidMap.values()].filter((p) => p.status === "cash" || p.status === "transfer").reduce((s, p) => s + p.jumlah, 0);
+  const mineCash = [...paidMap.values()].filter((p) => p.status === "cash").reduce((s, p) => s + p.jumlah, 0);
+  const mineTransfer = [...paidMap.values()].filter((p) => p.status === "transfer").reduce((s, p) => s + p.jumlah, 0);
+  const uang = mineCash + mineTransfer;
+  const belumTanpaKet = mine.filter((c) => {
+    const p = paidMap.get(c.id);
+    if (!p) return true;
+    const isBelum = p.status === "belum" || p.status === "belum_dobel";
+    return isBelum && !(p.keterangan && p.keterangan.trim());
+  });
 
   const save = (customer, status, keterangan, jumlah) => savePaymentRecord({ month, customer, status, keterangan, jumlah, penagihUid: uid });
 
@@ -612,8 +659,18 @@ function PenagihView({ profile, uid, customers, onLogout }) {
           <div className="rounded-2xl bg-white/10 p-3"><div className="text-white/70 text-xs mb-1">Berhasil ditarik</div><div className="text-white font-mono font-semibold">{berhasil}/{mine.length}</div></div>
           <div className="rounded-2xl bg-white/10 p-3"><div className="text-white/70 text-xs mb-1">Estimasi komisi</div><div className="text-white font-mono font-semibold">{rupiah(berhasil * KOMISI_PER_PELANGGAN)}</div></div>
         </div>
+        <div className="mt-2 grid grid-cols-2 gap-2">
+          <div className="rounded-2xl bg-white/10 p-3"><div className="text-white/70 text-xs mb-1">Cash</div><div className="text-white font-mono font-semibold">{rupiah(mineCash)}</div></div>
+          <div className="rounded-2xl bg-white/10 p-3"><div className="text-white/70 text-xs mb-1">Transfer</div><div className="text-white font-mono font-semibold">{rupiah(mineTransfer)}</div></div>
+        </div>
       </div>
       <div className="p-5">
+        {belumTanpaKet.length > 0 && (
+          <div className="rounded-2xl bg-white border border-gray-100 p-4 mb-3">
+            <div className="font-semibold text-sm mb-1" style={{ color: AMBER }}>Belum bayar & belum ada keterangan ({belumTanpaKet.length})</div>
+            <p className="text-xs text-gray-400">Isi status/keterangan untuk pelanggan ini di daftar bawah.</p>
+          </div>
+        )}
         <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-xl px-3 mb-3">
           <Search size={15} color="#9CA3AF" />
           <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Cari nama / daerah" className="flex-1 py-2.5 text-sm outline-none" />
