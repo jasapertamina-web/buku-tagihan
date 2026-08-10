@@ -569,6 +569,7 @@ function AdminView({ profile, customers, penagihList, onLogout }) {
   const totalTransfer = payments.filter((p) => p.status === "transfer").reduce((s, p) => s + p.jumlah, 0);
   const totalKurang = payments.filter((p) => p.status === "kurang").reduce((s, p) => s + p.jumlah, 0);
   const isolirCount = customersForMonth.filter((c) => c.status === "isolir" || c.status === "off").length;
+  const aktifCount = customersForMonth.filter((c) => c.status === "aktif").length;
   const belumBayar = customersForMonth.filter((c) => c.status === "aktif" && !paidMap.has(c.id));
   const belumBayarTanpaKet = customersForMonth.filter((c) => {
     if (c.status !== "aktif") return false;
@@ -638,6 +639,7 @@ function AdminView({ profile, customers, penagihList, onLogout }) {
           <>
             <div className="flex gap-3 flex-wrap mb-3">
               <StatCard icon={Users} label={`Total Pelanggan ${monthLabel(viewMonth)}`} value={customersForMonth.length} />
+              <StatCard icon={ShieldCheck} label="Pelanggan Aktif" value={aktifCount} accent={TEAL} />
               <StatCard icon={Wallet} label={`Pendapatan ${monthLabel(viewMonth)}`} value={rupiah(totalCash + totalTransfer)} accent={TEAL} sub={`${lunas.length} pelanggan lunas`} />
               <StatCard icon={Ban} label="Isolir / Off" value={isolirCount} accent={AMBER} />
             </div>
