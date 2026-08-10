@@ -31,11 +31,23 @@ const lastMonths = (n = 6) => {
   }
   return out;
 };
+// Daftar n bulan mundur dari startKey (termasuk startKey sendiri), untuk hitung tunggakan relatif ke bulan yang sedang dilihat
+const monthsFrom = (startKey, n = 7) => {
+  const [y, m] = startKey.split("-").map(Number);
+  const d = new Date(y, m - 1, 1);
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    out.push(monthKey(d));
+    d.setMonth(d.getMonth() - 1);
+  }
+  return out;
+};
 const rupiah = (n) => "Rp" + Number(n || 0).toLocaleString("id-ID");
 
 const STATUS_LABEL = {
   cash: { label: "Lunas · Cash", color: TEAL, bg: "#E6F4F1" },
   transfer: { label: "Lunas · Transfer", color: NAVY, bg: "#EAF0F6" },
+  kurang: { label: "Bayar Kurang", color: "#B98900", bg: "#FFF6DD" },
   belum: { label: "Belum Bayar", color: AMBER, bg: "#FBEAE6" },
   belum_dobel: { label: "Belum Bayar (Dobel Bln Depan)", color: "#B0362A", bg: "#FBEAE6" },
 };
@@ -95,6 +107,45 @@ function usePenagihList() {
   return list;
 }
 
+// Ambil data pembayaran untuk beberapa bulan sekaligus (dipakai untuk hitung tunggakan)
+function usePaymentsRange(months) {
+  const key = months.join(",");
+  const [byMonth, setByMonth] = useState(new Map());
+  useEffect(() => {
+    if (months.length === 0) return;
+    const q = query(collection(db, "payments"), where("month", "in", months));
+    return onSnapshot(q, (snap) => {
+      const map = new Map();
+      months.forEach((m) => map.set(m, new Map()));
+      snap.docs.forEach((d) => {
+        const data = d.data();
+        if (!map.has(data.month)) map.set(data.month, new Map());
+        map.get(data.month).set(data.customerId, data);
+      });
+      setByMonth(map);
+    });
+  }, [key]);
+  return byMonth;
+}
+
+// Hitung berapa bulan berturut-turut (sebelum referenceMonth) seorang pelanggan belum lunas
+function computeArrearsMap(customers, byMonth, orderedMonthsDesc, referenceMonth) {
+  const idx = orderedMonthsDesc.indexOf(referenceMonth);
+  const priorMonths = idx >= 0 ? orderedMonthsDesc.slice(idx + 1) : orderedMonthsDesc;
+  const map = new Map();
+  customers.forEach((c) => {
+    let streak = 0;
+    for (const m of priorMonths) {
+      const pay = byMonth.get(m)?.get(c.id);
+      const paidFull = pay && (pay.status === "cash" || pay.status === "transfer");
+      if (paidFull) break;
+      streak++;
+    }
+    map.set(c.id, streak);
+  });
+  return map;
+}
+
 async function savePaymentRecord({ month, customer, status, keterangan, jumlah, penagihUid }) {
   const payId = `${month}_${customer.id}`;
   await setDoc(doc(db, "payments", payId), {
@@ -125,7 +176,7 @@ function StatCard({ icon: Icon, label, value, sub, accent }) {
     </div>
   );
 }
-function effectiveTagihan(c) { return c.dendaBulanDepan ? c.harga * 2 : c.harga; }
+// Catatan: harga per pelanggan sudah tidak lagi dipatok admin — jumlah pembayaran diketik manual oleh penagih saat entri.
 
 // ---------- Login ----------
 function LoginScreen({ error }) {
@@ -177,7 +228,7 @@ function LoginScreen({ error }) {
 
 // ---------- Form tambah/ubah pelanggan (khusus Admin) ----------
 function CustomerForm({ onSave, onCancel, penagihList, initial }) {
-  const [form, setForm] = useState(initial || { nama: "", daerah: "", harga: "", status: "aktif", penagihId: penagihList[0]?.uid || "" });
+  const [form, setForm] = useState(initial || { nama: "", daerah: "", status: "aktif", penagihId: penagihList[0]?.uid || "" });
   return (
     <div className="fixed inset-0 z-20 flex items-end sm:items-center justify-center bg-black/30 p-0 sm:p-6">
       <div className="w-full sm:max-w-md bg-white rounded-t-2xl sm:rounded-2xl p-5 max-h-[90vh] overflow-y-auto">
@@ -190,8 +241,7 @@ function CustomerForm({ onSave, onCancel, penagihList, initial }) {
             <input value={form.nama} onChange={(e) => setForm({ ...form, nama: e.target.value })} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm mt-1 outline-none focus:border-gray-400" /></div>
           <div><label className="text-xs text-gray-500">Daerah</label>
             <input value={form.daerah} onChange={(e) => setForm({ ...form, daerah: e.target.value })} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm mt-1 outline-none focus:border-gray-400" /></div>
-          <div><label className="text-xs text-gray-500">Harga per bulan (Rp)</label>
-            <input type="number" value={form.harga} onChange={(e) => setForm({ ...form, harga: e.target.value })} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm mt-1 outline-none focus:border-gray-400" /></div>
+          <p className="text-xs text-gray-400 -mt-1">Jumlah tagihan tidak dipatok di sini — penagih akan mengetik jumlah yang benar-benar dibayar saat entri pembayaran tiap bulan.</p>
           <div><label className="text-xs text-gray-500">Penagih</label>
             <select value={form.penagihId} onChange={(e) => setForm({ ...form, penagihId: e.target.value })} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm mt-1 outline-none focus:border-gray-400">
               {penagihList.map((p) => <option key={p.uid} value={p.uid}>{p.nama}</option>)}
@@ -206,7 +256,7 @@ function CustomerForm({ onSave, onCancel, penagihList, initial }) {
               ))}
             </div></div>
         </div>
-        <button onClick={() => onSave({ ...form, harga: Number(form.harga) || 0 })} disabled={!form.nama || !form.daerah}
+        <button onClick={() => onSave({ ...form, harga: 0 })} disabled={!form.nama || !form.daerah}
           className="w-full mt-5 py-3 rounded-xl text-white font-semibold text-sm disabled:opacity-40" style={{ background: TEAL }}>
           Simpan
         </button>
@@ -262,7 +312,7 @@ function BulkImportForm({ onCancel, onImported, penagihList }) {
           batch.set(ref, {
             nama: r.nama,
             daerah: r.daerah,
-            harga: Number(String(r.harga).replace(/\D/g, "")) || 0,
+            harga: 0,
             status: "aktif",
             penagihId: uid || "",
             dendaBulanDepan: false,
@@ -289,14 +339,15 @@ function BulkImportForm({ onCancel, onImported, penagihList }) {
         {!result && (
           <>
             <p className="text-xs text-gray-500 mb-2">
-              Tempel data dari Excel/Spreadsheet (kolom: <b>Nama, Daerah, Harga per bulan, Nama Penagih</b>).
+              Tempel data dari Excel/Spreadsheet (kolom: <b>Nama, Daerah, 0, Nama Penagih</b> — kolom ke-3 selalu diisi <b>0</b>,
+              karena jumlah tagihan tidak dipatok di sini, penagih akan mengetik sendiri jumlah yang dibayar saat entri tiap bulan).
               Bisa langsung select & copy beberapa baris dari Excel lalu paste di sini. Nama penagih harus sama
               persis dengan nama di daftar penagih (boleh dikosongkan kalau belum mau ditugaskan).
             </p>
             <textarea
               value={text}
               onChange={(e) => setText(e.target.value)}
-              placeholder={"Contoh (1 pelanggan per baris):\nAgung, PADI, 110000, bekjah\nPGD Wawan, PGD-BOKOR, 150000, mbak nurul"}
+              placeholder={"Contoh (1 pelanggan per baris):\nAgung, PADI, 0, bekjah\nPGD Wawan, PGD-BOKOR, 0, mbak nurul"}
               rows={8}
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm mb-2 outline-none resize-none font-mono"
             />
@@ -342,11 +393,21 @@ function AdminView({ profile, customers, penagihList, onLogout }) {
   const [viewMonth, setViewMonth] = useState(monthKey());
   const payments = usePayments(viewMonth);
 
+  // Tunggakan: relatif ke bulan sekarang (dipakai di tab Ringkasan & Pelanggan)
+  const arrearsMonthsNow = useMemo(() => monthsFrom(monthKey(), 7), []);
+  const arrearsByMonthNow = usePaymentsRange(arrearsMonthsNow);
+  const arrearsMapNow = useMemo(() => computeArrearsMap(customers, arrearsByMonthNow, arrearsMonthsNow, monthKey()), [customers, arrearsByMonthNow, arrearsMonthsNow]);
+  // Tunggakan: relatif ke bulan yang sedang dilihat di tab Riwayat
+  const arrearsMonthsView = useMemo(() => monthsFrom(viewMonth, 7), [viewMonth]);
+  const arrearsByMonthView = usePaymentsRange(arrearsMonthsView);
+  const arrearsMapView = useMemo(() => computeArrearsMap(customers, arrearsByMonthView, arrearsMonthsView, viewMonth), [customers, arrearsByMonthView, arrearsMonthsView, viewMonth]);
+
   const daerahList = useMemo(() => [...new Set(customers.map((c) => c.daerah).filter(Boolean))].sort(), [customers]);
   const paidMap = new Map(payments.map((p) => [p.customerId, p]));
   const lunas = payments.filter((p) => p.status === "cash" || p.status === "transfer");
   const totalCash = payments.filter((p) => p.status === "cash").reduce((s, p) => s + p.jumlah, 0);
   const totalTransfer = payments.filter((p) => p.status === "transfer").reduce((s, p) => s + p.jumlah, 0);
+  const totalKurang = payments.filter((p) => p.status === "kurang").reduce((s, p) => s + p.jumlah, 0);
   const isolirCount = customers.filter((c) => c.status === "isolir" || c.status === "off").length;
   const belumBayar = customers.filter((c) => c.status === "aktif" && !paidMap.has(c.id));
   const belumBayarTanpaKet = customers.filter((c) => {
@@ -356,6 +417,12 @@ function AdminView({ profile, customers, penagihList, onLogout }) {
     const isBelum = pay.status === "belum" || pay.status === "belum_dobel";
     return isBelum && !(pay.keterangan && pay.keterangan.trim());
   });
+  const withCustomer = (p) => ({ ...p, customer: customers.find((c) => c.id === p.customerId) });
+  const lunasList = useMemo(() => lunas.map(withCustomer), [lunas, customers]);
+  const bayarKurangList = useMemo(() => payments.filter((p) => p.status === "kurang").map(withCustomer), [payments, customers]);
+  const dobelList = useMemo(() => payments.filter((p) => p.status === "belum_dobel").map(withCustomer), [payments, customers]);
+  const saveRiwayat = (customer, status, keterangan, jumlah) =>
+    savePaymentRecord({ month: viewMonth, customer, status, keterangan, jumlah, penagihUid: customer.penagihId || "" });
 
   const perDaerah = useMemo(() => daerahList.map((d) => {
     const cs = customers.filter((c) => c.daerah === d);
@@ -429,8 +496,7 @@ function AdminView({ profile, customers, penagihList, onLogout }) {
               <div className="font-semibold text-sm mb-3" style={{ color: NAVY }}>Belum bayar bulan ini ({belumBayar.length})</div>
               {belumBayar.slice(0, 8).map((c) => (
                 <div key={c.id} className="flex items-center justify-between py-2 border-b border-gray-50 last:border-0">
-                  <div><div className="text-sm font-medium" style={{ color: INK }}>{c.nama}</div><div className="text-xs text-gray-400">{c.daerah}</div></div>
-                  <div className="text-xs font-mono" style={{ color: AMBER }}>{rupiah(effectiveTagihan(c))}</div>
+                  <div><div className="text-sm font-medium flex items-center gap-1.5" style={{ color: INK }}>{c.nama}{arrearsMapNow.get(c.id) > 0 && <Badge color="#B0362A" bg="#FBEAE6">Nunggak {arrearsMapNow.get(c.id)}x</Badge>}</div><div className="text-xs text-gray-400">{c.daerah}</div></div>
                 </div>
               ))}
               {belumBayar.length === 0 && <p className="text-xs text-gray-400">Semua pelanggan aktif sudah bayar bulan ini.</p>}
@@ -442,8 +508,7 @@ function AdminView({ profile, customers, penagihList, onLogout }) {
                 const p = penagihList.find((pp) => pp.uid === c.penagihId);
                 return (
                   <div key={c.id} className="flex items-center justify-between py-2 border-b border-gray-50 last:border-0">
-                    <div><div className="text-sm font-medium" style={{ color: INK }}>{c.nama}</div><div className="text-xs text-gray-400">{c.daerah} · Penagih: {p?.nama || "-"}</div></div>
-                    <div className="text-xs font-mono" style={{ color: AMBER }}>{rupiah(effectiveTagihan(c))}</div>
+                    <div><div className="text-sm font-medium flex items-center gap-1.5" style={{ color: INK }}>{c.nama}{arrearsMapNow.get(c.id) > 0 && <Badge color="#B0362A" bg="#FBEAE6">Nunggak {arrearsMapNow.get(c.id)}x</Badge>}</div><div className="text-xs text-gray-400">{c.daerah} · Penagih: {p?.nama || "-"}</div></div>
                   </div>
                 );
               })}
@@ -478,8 +543,8 @@ function AdminView({ profile, customers, penagihList, onLogout }) {
                   <button key={c.id} onClick={() => { setEditing(c); setShowForm(true); }} className="w-full text-left rounded-xl bg-white border border-gray-100 p-3">
                     <div className="flex items-center justify-between">
                       <div>
-                        <div className="text-sm font-medium flex items-center gap-1" style={{ color: INK }}>{c.nama} <Pencil size={11} color="#C4C9D2" /></div>
-                        <div className="text-xs text-gray-400">{c.daerah} · {rupiah(effectiveTagihan(c))}/bln{c.dendaBulanDepan && <span style={{ color: AMBER }}> (denda aktif)</span>}</div>
+                        <div className="text-sm font-medium flex items-center gap-1.5" style={{ color: INK }}>{c.nama} <Pencil size={11} color="#C4C9D2" />{arrearsMapNow.get(c.id) > 0 && <Badge color="#B0362A" bg="#FBEAE6">Nunggak {arrearsMapNow.get(c.id)}x</Badge>}</div>
+                        <div className="text-xs text-gray-400">{c.daerah}{c.dendaBulanDepan && <span style={{ color: AMBER }}> · Dobel bulan depan</span>}</div>
                       </div>
                       <div className="flex flex-col items-end gap-1">
                         {c.status !== "aktif" && <Badge color={AMBER} bg="#FBEAE6">{c.status === "isolir" ? "Isolir" : "Off"}</Badge>}
@@ -542,8 +607,9 @@ function AdminView({ profile, customers, penagihList, onLogout }) {
             <div className="flex gap-3 flex-wrap mb-3">
               <StatCard icon={Wallet} label="Total Cash" value={rupiah(totalCash)} accent={TEAL} />
               <StatCard icon={Wallet} label="Total Transfer" value={rupiah(totalTransfer)} accent={NAVY} />
+              <StatCard icon={Wallet} label="Total Kurang Bayar" value={rupiah(totalKurang)} accent="#B98900" />
             </div>
-            <div className="rounded-2xl bg-white border border-gray-100 p-4">
+            <div className="rounded-2xl bg-white border border-gray-100 p-4 mb-3">
               <div className="font-semibold text-sm mb-3" style={{ color: NAVY }}>Rincian per Daerah — {monthLabel(viewMonth)}</div>
               {perDaerah.map((d) => (
                 <div key={d.daerah} className="flex items-center justify-between text-sm py-1.5 border-b border-gray-50 last:border-0">
@@ -553,6 +619,55 @@ function AdminView({ profile, customers, penagihList, onLogout }) {
                 </div>
               ))}
             </div>
+
+            <div className="rounded-2xl bg-white border border-gray-100 p-4 mb-3">
+              <div className="font-semibold text-sm mb-3" style={{ color: TEAL }}>Bayar Pas / Lunas ({lunasList.length})</div>
+              {lunasList.map((p) => (
+                <div key={p.id} className="flex items-center justify-between py-2 border-b border-gray-50 last:border-0">
+                  <div><div className="text-sm font-medium" style={{ color: INK }}>{p.customer?.nama || "-"}</div><div className="text-xs text-gray-400">{p.customer?.daerah}</div></div>
+                  <div className="text-right">
+                    <div className="text-xs font-mono font-semibold" style={{ color: TEAL }}>{rupiah(p.jumlah)}</div>
+                    <div className="text-xs text-gray-400">{p.status === "cash" ? "Cash" : "Transfer"}</div>
+                  </div>
+                </div>
+              ))}
+              {lunasList.length === 0 && <p className="text-xs text-gray-400">Belum ada yang lunas bulan ini.</p>}
+            </div>
+
+            <div className="rounded-2xl bg-white border border-gray-100 p-4 mb-3">
+              <div className="font-semibold text-sm mb-1" style={{ color: "#B98900" }}>Bayar Kurang ({bayarKurangList.length})</div>
+              <p className="text-xs text-gray-400 mb-3">Pelanggan yang sudah bayar tapi belum penuh.</p>
+              {bayarKurangList.map((p) => (
+                <div key={p.id} className="flex items-center justify-between py-2 border-b border-gray-50 last:border-0">
+                  <div>
+                    <div className="text-sm font-medium flex items-center gap-1.5" style={{ color: INK }}>{p.customer?.nama || "-"}{arrearsMapView.get(p.customerId) > 0 && <Badge color="#B0362A" bg="#FBEAE6">Nunggak {arrearsMapView.get(p.customerId)}x</Badge>}</div>
+                    <div className="text-xs text-gray-400">{p.customer?.daerah}{p.keterangan && <> · "{p.keterangan}"</>}</div>
+                  </div>
+                  <div className="text-xs font-mono font-semibold" style={{ color: "#B98900" }}>{rupiah(p.jumlah)}</div>
+                </div>
+              ))}
+              {bayarKurangList.length === 0 && <p className="text-xs text-gray-400">Tidak ada pelanggan yang bayar kurang bulan ini.</p>}
+            </div>
+
+            <div className="rounded-2xl bg-white border border-gray-100 p-4 mb-3">
+              <div className="font-semibold text-sm mb-1" style={{ color: "#B0362A" }}>Akan Ditagih Dobel Bulan Depan ({dobelList.length})</div>
+              {dobelList.map((p) => (
+                <div key={p.id} className="flex items-center justify-between py-2 border-b border-gray-50 last:border-0">
+                  <div><div className="text-sm font-medium" style={{ color: INK }}>{p.customer?.nama || "-"}</div><div className="text-xs text-gray-400">{p.customer?.daerah}{p.keterangan && <> · "{p.keterangan}"</>}</div></div>
+                </div>
+              ))}
+              {dobelList.length === 0 && <p className="text-xs text-gray-400">Tidak ada.</p>}
+            </div>
+
+            <div className="rounded-2xl bg-white border border-gray-100 p-4 mb-3">
+              <div className="font-semibold text-sm mb-1" style={{ color: AMBER }}>Belum Bayar & Tanpa Keterangan ({belumBayarTanpaKet.length})</div>
+              <p className="text-xs text-gray-400 mb-3">Bisa langsung dicatat di sini kalau ternyata pelanggan ini bayar belakangan — termasuk untuk bulan yang sudah lewat.</p>
+              <div className="space-y-2">
+                {belumBayarTanpaKet.map((c) => <PayRow key={c.id} customer={c} existing={paidMap.get(c.id)} onSave={saveRiwayat} arrears={arrearsMapView.get(c.id) || 0} />)}
+                {belumBayarTanpaKet.length === 0 && <p className="text-xs text-gray-400">Semua pelanggan yang belum bayar sudah punya keterangan.</p>}
+              </div>
+            </div>
+
             <p className="text-xs text-gray-400 mt-3">Data bulan-bulan sebelumnya tersimpan permanen dan tidak pernah terhapus — setiap bulan baru otomatis mulai kosong tanpa menghapus riwayat.</p>
           </>
         )}
@@ -571,16 +686,17 @@ function AdminView({ profile, customers, penagihList, onLogout }) {
 }
 
 // ---------- Panel Penagih ----------
-function PayRow({ customer, existing, onSave }) {
+function PayRow({ customer, existing, onSave, arrears = 0 }) {
   const [editingRow, setEditingRow] = useState(!existing);
   const [status, setStatus] = useState(existing?.status || "");
   const [keterangan, setKeterangan] = useState(existing?.keterangan || "");
-  const tagihan = effectiveTagihan(customer);
+  const [jumlah, setJumlah] = useState(existing?.jumlah ? String(existing.jumlah) : "");
+  const needsJumlah = status === "cash" || status === "transfer" || status === "kurang";
 
   const submit = () => {
     if (!status) return;
-    const jumlah = status === "cash" || status === "transfer" ? tagihan : 0;
-    onSave(customer, status, keterangan, jumlah);
+    const jml = needsJumlah ? Number(jumlah) || 0 : 0;
+    onSave(customer, status, keterangan, jml);
     setEditingRow(false);
   };
 
@@ -590,8 +706,8 @@ function PayRow({ customer, existing, onSave }) {
       <div className="rounded-xl bg-white border border-gray-100 p-3">
         <div className="flex items-center justify-between">
           <div>
-            <div className="text-sm font-medium" style={{ color: INK }}>{customer.nama}</div>
-            <div className="text-xs text-gray-400">{customer.daerah} · {rupiah(tagihan)}/bln</div>
+            <div className="text-sm font-medium flex items-center gap-1.5" style={{ color: INK }}>{customer.nama}{arrears > 0 && <Badge color="#B0362A" bg="#FBEAE6">Nunggak {arrears}x</Badge>}</div>
+            <div className="text-xs text-gray-400">{customer.daerah}{existing.jumlah > 0 && <> · {rupiah(existing.jumlah)}</>}</div>
             {existing.keterangan && <div className="text-xs text-gray-400 italic mt-1">"{existing.keterangan}"</div>}
           </div>
           <div className="flex flex-col items-end gap-1">
@@ -605,28 +721,36 @@ function PayRow({ customer, existing, onSave }) {
 
   return (
     <div className="rounded-xl bg-white border border-gray-100 p-3">
-      <div className="text-sm font-medium" style={{ color: INK }}>{customer.nama} {customer.status !== "aktif" && <Badge color={AMBER} bg="#FBEAE6">{customer.status}</Badge>}</div>
-      <div className="text-xs text-gray-400 mb-2">{customer.daerah} · {rupiah(tagihan)}/bln{customer.dendaBulanDepan && <span style={{ color: AMBER }}> (denda dobel aktif)</span>}</div>
+      <div className="text-sm font-medium flex items-center gap-1.5" style={{ color: INK }}>
+        {customer.nama} {customer.status !== "aktif" && <Badge color={AMBER} bg="#FBEAE6">{customer.status}</Badge>}
+        {arrears > 0 && <Badge color="#B0362A" bg="#FBEAE6">Nunggak {arrears}x</Badge>}
+      </div>
+      <div className="text-xs text-gray-400 mb-2">{customer.daerah}{customer.dendaBulanDepan && <span style={{ color: AMBER }}> · Dobel bulan depan</span>}</div>
       <select value={status} onChange={(e) => setStatus(e.target.value)} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm mb-2 outline-none">
         <option value="">Pilih status bayar...</option>
         <option value="cash">Lunas · Cash</option>
         <option value="transfer">Lunas · Transfer</option>
+        <option value="kurang">Bayar Kurang / Sebagian</option>
         <option value="belum">Belum Bayar</option>
         <option value="belum_dobel">Belum Bayar — Dobel Bulan Depan</option>
       </select>
+      {needsJumlah && (
+        <input type="number" inputMode="numeric" value={jumlah} onChange={(e) => setJumlah(e.target.value)} placeholder="Jumlah dibayar (Rp)"
+          className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm mb-2 outline-none" />
+      )}
       <textarea value={keterangan} onChange={(e) => setKeterangan(e.target.value)} placeholder="Keterangan (opsional)" rows={2}
         className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm mb-2 outline-none resize-none" />
       <div className="flex gap-2">
         {existing && <button onClick={() => setEditingRow(false)} className="flex-1 text-xs font-medium py-2 rounded-lg border border-gray-200 text-gray-500">Batal</button>}
-        <button onClick={submit} disabled={!status} className="flex-1 text-xs font-semibold py-2 rounded-lg text-white disabled:opacity-40" style={{ background: TEAL }}>Simpan</button>
+        <button onClick={submit} disabled={!status || (needsJumlah && !jumlah)} className="flex-1 text-xs font-semibold py-2 rounded-lg text-white disabled:opacity-40" style={{ background: TEAL }}>Simpan</button>
       </div>
     </div>
   );
 }
 
 function PenagihView({ profile, uid, customers, onLogout }) {
-  const month = monthKey();
-  const payments = usePayments(month);
+  const [entryMonth, setEntryMonth] = useState(monthKey());
+  const payments = usePayments(entryMonth);
   const [query, setQuery] = useState("");
   const [daerahFilter, setDaerahFilter] = useState("semua");
   const mine = customers.filter((c) => c.penagihId === uid);
@@ -638,33 +762,46 @@ function PenagihView({ profile, uid, customers, onLogout }) {
   const berhasil = mine.filter((c) => { const p = paidMap.get(c.id); return p && (p.status === "cash" || p.status === "transfer"); }).length;
   const mineCash = [...paidMap.values()].filter((p) => p.status === "cash").reduce((s, p) => s + p.jumlah, 0);
   const mineTransfer = [...paidMap.values()].filter((p) => p.status === "transfer").reduce((s, p) => s + p.jumlah, 0);
-  const uang = mineCash + mineTransfer;
+  const mineKurang = [...paidMap.values()].filter((p) => p.status === "kurang").reduce((s, p) => s + p.jumlah, 0);
   const belumTanpaKet = mine.filter((c) => {
     const p = paidMap.get(c.id);
     if (!p) return true;
     const isBelum = p.status === "belum" || p.status === "belum_dobel";
     return isBelum && !(p.keterangan && p.keterangan.trim());
   });
+  const arrearsMonths = useMemo(() => monthsFrom(entryMonth, 7), [entryMonth]);
+  const arrearsByMonth = usePaymentsRange(arrearsMonths);
+  const arrearsMap = useMemo(() => computeArrearsMap(mine, arrearsByMonth, arrearsMonths, entryMonth), [mine, arrearsByMonth, arrearsMonths, entryMonth]);
+  const isCurrentMonth = entryMonth === monthKey();
 
-  const save = (customer, status, keterangan, jumlah) => savePaymentRecord({ month, customer, status, keterangan, jumlah, penagihUid: uid });
+  const save = (customer, status, keterangan, jumlah) => savePaymentRecord({ month: entryMonth, customer, status, keterangan, jumlah, penagihUid: uid });
 
   return (
     <div className="min-h-screen pb-6" style={{ background: CREAM }}>
       <div className="px-5 pt-5 pb-4 sticky top-0 z-10" style={{ background: NAVY }}>
         <div className="flex items-center justify-between">
-          <div><div className="text-white/60 text-xs">{monthLabel(month)}</div><div className="text-white font-bold text-lg" style={{ fontFamily: "'Sora', sans-serif" }}>{profile.nama}</div></div>
+          <div><div className="text-white/60 text-xs">Buku Tagihan</div><div className="text-white font-bold text-lg" style={{ fontFamily: "'Sora', sans-serif" }}>{profile.nama}</div></div>
           <button onClick={onLogout} className="text-white/70"><LogOut size={18} /></button>
         </div>
-        <div className="mt-4 grid grid-cols-2 gap-2">
+        <select value={entryMonth} onChange={(e) => setEntryMonth(e.target.value)} className="w-full mt-3 border border-white/20 bg-white/10 text-white rounded-lg px-3 py-2 text-sm outline-none">
+          {lastMonths(6).map((m) => <option key={m} value={m} style={{ color: INK }}>{monthLabel(m)}{m === monthKey() ? " (bulan ini)" : ""}</option>)}
+        </select>
+        <div className="mt-3 grid grid-cols-2 gap-2">
           <div className="rounded-2xl bg-white/10 p-3"><div className="text-white/70 text-xs mb-1">Berhasil ditarik</div><div className="text-white font-mono font-semibold">{berhasil}/{mine.length}</div></div>
           <div className="rounded-2xl bg-white/10 p-3"><div className="text-white/70 text-xs mb-1">Estimasi komisi</div><div className="text-white font-mono font-semibold">{rupiah(berhasil * KOMISI_PER_PELANGGAN)}</div></div>
         </div>
-        <div className="mt-2 grid grid-cols-2 gap-2">
-          <div className="rounded-2xl bg-white/10 p-3"><div className="text-white/70 text-xs mb-1">Cash</div><div className="text-white font-mono font-semibold">{rupiah(mineCash)}</div></div>
-          <div className="rounded-2xl bg-white/10 p-3"><div className="text-white/70 text-xs mb-1">Transfer</div><div className="text-white font-mono font-semibold">{rupiah(mineTransfer)}</div></div>
+        <div className="mt-2 grid grid-cols-3 gap-2">
+          <div className="rounded-2xl bg-white/10 p-3"><div className="text-white/70 text-xs mb-1">Cash</div><div className="text-white font-mono font-semibold text-sm">{rupiah(mineCash)}</div></div>
+          <div className="rounded-2xl bg-white/10 p-3"><div className="text-white/70 text-xs mb-1">Transfer</div><div className="text-white font-mono font-semibold text-sm">{rupiah(mineTransfer)}</div></div>
+          <div className="rounded-2xl bg-white/10 p-3"><div className="text-white/70 text-xs mb-1">Kurang</div><div className="text-white font-mono font-semibold text-sm">{rupiah(mineKurang)}</div></div>
         </div>
       </div>
       <div className="p-5">
+        {!isCurrentMonth && (
+          <div className="rounded-2xl p-3 mb-3" style={{ background: "#EAF0F6" }}>
+            <p className="text-xs" style={{ color: NAVY }}>Anda sedang mencatat pembayaran untuk <b>{monthLabel(entryMonth)}</b> — bukan bulan berjalan. Cocok untuk mencatat pelanggan yang baru bayar sekarang meski tagihan bulan itu sudah lewat.</p>
+          </div>
+        )}
         {belumTanpaKet.length > 0 && (
           <div className="rounded-2xl bg-white border border-gray-100 p-4 mb-3">
             <div className="font-semibold text-sm mb-1" style={{ color: AMBER }}>Belum bayar & belum ada keterangan ({belumTanpaKet.length})</div>
@@ -686,7 +823,7 @@ function PenagihView({ profile, uid, customers, onLogout }) {
           </div>
         )}
         <div className="space-y-2">
-          {filtered.map((c) => <PayRow key={c.id} customer={c} existing={paidMap.get(c.id)} onSave={save} />)}
+          {filtered.map((c) => <PayRow key={c.id} customer={c} existing={paidMap.get(c.id)} onSave={save} arrears={arrearsMap.get(c.id) || 0} />)}
           {mine.length === 0 && <p className="text-xs text-gray-400 text-center py-10">Belum ada pelanggan yang ditugaskan ke Anda.</p>}
           {mine.length > 0 && filtered.length === 0 && <p className="text-xs text-gray-400 text-center py-10">Tidak ada pelanggan ditemukan.</p>}
         </div>
