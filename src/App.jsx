@@ -950,7 +950,9 @@ function PayRow({ customer, existing, onSave }) {
         </p>
       )}
       {needsJumlah && (
-        <input type="number" inputMode="numeric" value={jumlah} onChange={(e) => setJumlah(e.target.value)} placeholder="Jumlah dibayar (Rp)"
+        <input type="text" inputMode="numeric" value={jumlah}
+          onChange={(e) => setJumlah(e.target.value.replace(/[^\d]/g, ""))}
+          placeholder="Jumlah dibayar (contoh: 110000 atau 110.000)"
           className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm mb-2 outline-none" />
       )}
       <textarea value={keterangan} onChange={(e) => setKeterangan(e.target.value)} placeholder="Keterangan (opsional)" rows={2}
