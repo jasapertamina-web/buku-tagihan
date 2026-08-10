@@ -1,9 +1,9 @@
 import { useState, useEffect, useMemo } from "react";
 import { initializeApp } from "firebase/app";
 import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut } from "firebase/auth";
-import { getFirestore, collection, doc, getDoc, setDoc, addDoc, updateDoc, onSnapshot, query, where, writeBatch } from "firebase/firestore";
+import { getFirestore, collection, doc, getDoc, setDoc, addDoc, updateDoc, deleteDoc, onSnapshot, query, where, writeBatch } from "firebase/firestore";
 import { firebaseConfig } from "./firebaseConfig";
-import { Search, Plus, X, Users, Wallet, Ban, LogOut, Loader2, Lock, Mail, Pencil, History, ShieldCheck, Upload } from "lucide-react";
+import { Search, Plus, X, Users, Wallet, Ban, LogOut, Loader2, Lock, Mail, Pencil, History, ShieldCheck, Upload, Trash2 } from "lucide-react";
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -151,6 +151,129 @@ function TunggakanEditor({ customer }) {
   );
 }
 
+// ---------- Ubah status massal (Off/Isolir) khusus Admin ----------
+function parseBulkStatusRows(text) {
+  return text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      // Terima paste dari Excel (pemisah TAB) atau ketik manual (pemisah koma/titik koma). Kolom daerah opsional, dipakai untuk membedakan nama yang sama.
+      const cols = line.includes("\t") ? line.split("\t") : line.split(/[,;]/);
+      const [nama, daerah] = cols.map((c) => (c || "").trim());
+      return { nama, daerah: daerah || "" };
+    })
+    .filter((r) => r.nama);
+}
+
+function BulkStatusForm({ onCancel, onImported, customers }) {
+  const [text, setText] = useState("");
+  const [targetStatus, setTargetStatus] = useState("off");
+  const [saving, setSaving] = useState(false);
+  const [result, setResult] = useState(null);
+
+  const rows = useMemo(() => parseBulkStatusRows(text), [text]);
+
+  const matchCustomer = (row) => {
+    const candidates = customers.filter((c) => (c.nama || "").toLowerCase().trim() === row.nama.toLowerCase().trim()
+      && (!row.daerah || (c.daerah || "").toLowerCase().trim() === row.daerah.toLowerCase().trim()));
+    return candidates;
+  };
+
+  const preview = useMemo(() => rows.map((r) => ({ ...r, matches: matchCustomer(r) })), [rows, customers]);
+  const matched = preview.filter((r) => r.matches.length === 1);
+  const notFound = preview.filter((r) => r.matches.length === 0);
+  const ambiguous = preview.filter((r) => r.matches.length > 1);
+
+  const doSubmit = async () => {
+    if (matched.length === 0) return;
+    setSaving(true);
+    try {
+      const chunks = [];
+      for (let i = 0; i < matched.length; i += 400) chunks.push(matched.slice(i, i + 400));
+      let count = 0;
+      for (const chunk of chunks) {
+        const batch = writeBatch(db);
+        chunk.forEach((r) => {
+          batch.update(doc(db, "customers", r.matches[0].id), { status: targetStatus });
+          count++;
+        });
+        await batch.commit();
+      }
+      setResult({ count, notFound, ambiguous });
+    } catch (e) {
+      setResult({ error: e.message });
+    }
+    setSaving(false);
+  };
+
+  return (
+    <div className="fixed inset-0 z-20 flex items-end sm:items-center justify-center bg-black/30 p-0 sm:p-6">
+      <div className="w-full sm:max-w-lg bg-white rounded-t-2xl sm:rounded-2xl p-5 max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="font-semibold" style={{ color: NAVY }}>Ubah Status Massal</h3>
+          <button onClick={onCancel}><X size={18} color="#9CA3AF" /></button>
+        </div>
+
+        {!result && (
+          <>
+            <p className="text-xs text-gray-500 mb-2">
+              Tempel nama pelanggan yang mau diubah statusnya, satu per baris. Tambahkan kolom daerah (pisahkan koma/TAB)
+              kalau ada nama yang sama di beberapa daerah, biar tidak salah pilih.
+            </p>
+            <div className="flex gap-2 mb-2">
+              {["off", "isolir"].map((s) => (
+                <button key={s} onClick={() => setTargetStatus(s)} className="flex-1 text-xs font-medium py-2 rounded-lg border"
+                  style={targetStatus === s ? { background: AMBER, color: "white", borderColor: AMBER } : { borderColor: "#E5E7EB", color: "#6B7280" }}>
+                  Jadikan {s === "off" ? "Off" : "Isolir"}
+                </button>
+              ))}
+            </div>
+            <textarea
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              placeholder={"Contoh (1 pelanggan per baris):\nAgung, PADI\nPGD Wawan, PGD-BOKOR"}
+              rows={8}
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm mb-2 outline-none resize-none font-mono"
+            />
+            <p className="text-xs text-gray-400 mb-1">{rows.length} baris ditempel · <span style={{ color: TEAL }}>{matched.length} cocok</span>
+              {notFound.length > 0 && <span style={{ color: "#B0362A" }}> · {notFound.length} tidak ditemukan</span>}
+              {ambiguous.length > 0 && <span style={{ color: AMBER }}> · {ambiguous.length} nama ganda (perlu daerah)</span>}
+            </p>
+            <button onClick={doSubmit} disabled={saving || matched.length === 0}
+              className="w-full mt-2 py-3 rounded-xl text-white font-semibold text-sm disabled:opacity-40" style={{ background: TEAL }}>
+              {saving ? "Menyimpan..." : `Jadikan ${targetStatus === "off" ? "Off" : "Isolir"} — ${matched.length} Pelanggan`}
+            </button>
+          </>
+        )}
+
+        {result && !result.error && (
+          <div className="text-sm">
+            <p className="mb-2" style={{ color: TEAL }}>✔ {result.count} pelanggan diubah jadi {targetStatus === "off" ? "Off" : "Isolir"}.</p>
+            {result.notFound.length > 0 && (
+              <p className="text-xs mb-2" style={{ color: "#B0362A" }}>
+                Tidak ditemukan (cek ejaan nama/daerah): {result.notFound.map((r) => r.nama).join(", ")}
+              </p>
+            )}
+            {result.ambiguous.length > 0 && (
+              <p className="text-xs mb-3" style={{ color: AMBER }}>
+                Nama ganda, dilewati — tambahkan daerah untuk membedakan: {result.ambiguous.map((r) => r.nama).join(", ")}
+              </p>
+            )}
+            <button onClick={onImported} className="w-full py-3 rounded-xl text-white font-semibold text-sm" style={{ background: NAVY }}>Selesai</button>
+          </div>
+        )}
+        {result?.error && (
+          <div className="text-sm">
+            <p className="mb-3" style={{ color: AMBER }}>Gagal menyimpan: {result.error}</p>
+            <button onClick={() => setResult(null)} className="w-full py-3 rounded-xl text-white font-semibold text-sm" style={{ background: NAVY }}>Coba Lagi</button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ---------- UI kecil ----------
 function Badge({ children, color, bg }) {
   return <span className="text-xs font-semibold px-2 py-1 rounded-full whitespace-nowrap" style={{ background: bg, color }}>{children}</span>;
@@ -218,8 +341,9 @@ function LoginScreen({ error }) {
 }
 
 // ---------- Form tambah/ubah pelanggan (khusus Admin) ----------
-function CustomerForm({ onSave, onCancel, penagihList, initial }) {
+function CustomerForm({ onSave, onCancel, onDelete, penagihList, initial }) {
   const [form, setForm] = useState(initial || { nama: "", daerah: "", status: "aktif", penagihId: penagihList[0]?.uid || "", tunggakan: 0 });
+  const [confirmDelete, setConfirmDelete] = useState(false);
   return (
     <div className="fixed inset-0 z-20 flex items-end sm:items-center justify-center bg-black/30 p-0 sm:p-6">
       <div className="w-full sm:max-w-md bg-white rounded-t-2xl sm:rounded-2xl p-5 max-h-[90vh] overflow-y-auto">
@@ -257,12 +381,29 @@ function CustomerForm({ onSave, onCancel, penagihList, initial }) {
           className="w-full mt-5 py-3 rounded-xl text-white font-semibold text-sm disabled:opacity-40" style={{ background: TEAL }}>
           Simpan
         </button>
+        {initial && (
+          confirmDelete ? (
+            <div className="mt-3 rounded-xl border p-3" style={{ borderColor: "#F3C6BE", background: "#FBEAE6" }}>
+              <p className="text-xs mb-2" style={{ color: "#B0362A" }}>Hapus <b>{initial.nama}</b> permanen? Riwayat pembayarannya tidak akan ikut terhapus, tapi datanya tidak akan muncul lagi di aplikasi.</p>
+              <div className="flex gap-2">
+                <button onClick={() => onDelete(initial)} className="flex-1 py-2 rounded-lg text-white text-xs font-semibold" style={{ background: "#B0362A" }}>Ya, Hapus</button>
+                <button onClick={() => setConfirmDelete(false)} className="flex-1 py-2 rounded-lg text-xs font-semibold border" style={{ borderColor: "#E5E7EB", color: "#6B7280" }}>Batal</button>
+              </div>
+            </div>
+          ) : (
+            <button onClick={() => setConfirmDelete(true)} className="w-full mt-2 py-2.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5" style={{ color: "#B0362A" }}>
+              <Trash2 size={13} /> Hapus Pelanggan
+            </button>
+          )
+        )}
       </div>
     </div>
   );
 }
 
 // ---------- Import massal pelanggan (khusus Admin) ----------
+const VALID_IMPORT_STATUS = ["aktif", "off", "isolir"];
+
 function parseBulkRows(text) {
   return text
     .split("\n")
@@ -271,8 +412,10 @@ function parseBulkRows(text) {
     .map((line) => {
       // Terima paste dari Excel/Spreadsheet (pemisah TAB) atau ketik manual (pemisah koma/titik koma)
       const cols = line.includes("\t") ? line.split("\t") : line.split(/[,;]/);
-      const [nama, daerah, harga, penagihNama] = cols.map((c) => (c || "").trim());
-      return { nama, daerah, harga, penagihNama };
+      const [nama, daerah, harga, penagihNama, statusRaw] = cols.map((c) => (c || "").trim());
+      const statusLower = (statusRaw || "").toLowerCase();
+      const status = VALID_IMPORT_STATUS.includes(statusLower) ? statusLower : "aktif";
+      return { nama, daerah, harga, penagihNama, status, statusRaw };
     })
     .filter((r) => r.nama && r.daerah);
 }
@@ -300,17 +443,21 @@ function BulkImportForm({ onCancel, onImported, penagihList }) {
 
       let count = 0;
       const notFoundPenagih = new Set();
+      const invalidStatus = new Set();
+      const statusCount = { aktif: 0, off: 0, isolir: 0 };
       for (const chunk of chunks) {
         const batch = writeBatch(db);
         chunk.forEach((r) => {
           const uid = findPenagihUid(r.penagihNama);
           if (r.penagihNama && !uid) notFoundPenagih.add(r.penagihNama);
+          if (r.statusRaw && !VALID_IMPORT_STATUS.includes(r.statusRaw.toLowerCase())) invalidStatus.add(r.statusRaw);
+          statusCount[r.status] = (statusCount[r.status] || 0) + 1;
           const ref = doc(collection(db, "customers"));
           batch.set(ref, {
             nama: r.nama,
             daerah: r.daerah,
             harga: 0,
-            status: "aktif",
+            status: r.status,
             penagihId: uid || "",
             dendaBulanDepan: false,
             tunggakan: 0,
@@ -320,7 +467,7 @@ function BulkImportForm({ onCancel, onImported, penagihList }) {
         });
         await batch.commit();
       }
-      setResult({ count, notFoundPenagih: [...notFoundPenagih] });
+      setResult({ count, notFoundPenagih: [...notFoundPenagih], invalidStatus: [...invalidStatus], statusCount });
     } catch (e) {
       setResult({ error: e.message });
     }
@@ -338,19 +485,28 @@ function BulkImportForm({ onCancel, onImported, penagihList }) {
         {!result && (
           <>
             <p className="text-xs text-gray-500 mb-2">
-              Tempel data dari Excel/Spreadsheet (kolom: <b>Nama, Daerah, 0, Nama Penagih</b> — kolom ke-3 selalu diisi <b>0</b>,
+              Tempel data dari Excel/Spreadsheet (kolom: <b>Nama, Daerah, 0, Nama Penagih, Status</b> — kolom ke-3 selalu diisi <b>0</b>,
               karena jumlah tagihan tidak dipatok di sini, penagih akan mengetik sendiri jumlah yang dibayar saat entri tiap bulan).
               Bisa langsung select & copy beberapa baris dari Excel lalu paste di sini. Nama penagih harus sama
               persis dengan nama di daftar penagih (boleh dikosongkan kalau belum mau ditugaskan).
+              Kolom <b>Status</b> opsional — isi <b>off</b> atau <b>isolir</b> kalau pelanggan itu memang sudah
+              off/isolir sejak awal masuk data; kalau dikosongkan otomatis jadi <b>aktif</b>.
             </p>
             <textarea
               value={text}
               onChange={(e) => setText(e.target.value)}
-              placeholder={"Contoh (1 pelanggan per baris):\nAgung, PADI, 0, bekjah\nPGD Wawan, PGD-BOKOR, 0, mbak nurul"}
+              placeholder={"Contoh (1 pelanggan per baris):\nAgung, PADI, 0, bekjah\nPGD Wawan, PGD-BOKOR, 0, mbak nurul, off\nBudi, PADI, 0, bekjah, isolir"}
               rows={8}
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm mb-2 outline-none resize-none font-mono"
             />
-            <p className="text-xs text-gray-400 mb-3">{rows.length} baris terbaca sebagai pelanggan valid.</p>
+            <p className="text-xs text-gray-400 mb-3">
+              {rows.length} baris terbaca sebagai pelanggan valid.
+              {rows.length > 0 && (() => {
+                const off = rows.filter((r) => r.status === "off").length;
+                const isolir = rows.filter((r) => r.status === "isolir").length;
+                return (off > 0 || isolir > 0) ? ` (Off: ${off}, Isolir: ${isolir})` : "";
+              })()}
+            </p>
             <button onClick={doImport} disabled={saving || rows.length === 0}
               className="w-full py-3 rounded-xl text-white font-semibold text-sm disabled:opacity-40" style={{ background: TEAL }}>
               {saving ? "Mengimpor..." : `Import ${rows.length} Pelanggan`}
@@ -361,6 +517,15 @@ function BulkImportForm({ onCancel, onImported, penagihList }) {
         {result && !result.error && (
           <div className="text-sm">
             <p className="mb-2" style={{ color: TEAL }}>✔ Berhasil mengimpor {result.count} pelanggan.</p>
+            <p className="text-xs text-gray-500 mb-2">
+              Aktif: {result.statusCount.aktif} · Off: {result.statusCount.off} · Isolir: {result.statusCount.isolir}
+            </p>
+            {result.invalidStatus?.length > 0 && (
+              <p className="text-xs mb-3" style={{ color: AMBER }}>
+                Catatan: nilai status berikut tidak dikenali (harus aktif/off/isolir), jadi pelanggan itu tetap
+                diimpor sebagai <b>aktif</b>: {result.invalidStatus.join(", ")}
+              </p>
+            )}
             {result.notFoundPenagih.length > 0 && (
               <p className="text-xs mb-3" style={{ color: AMBER }}>
                 Catatan: nama penagih berikut tidak ditemukan di daftar penagih, jadi pelanggan itu diimpor tanpa
@@ -386,9 +551,11 @@ function AdminView({ profile, customers, penagihList, onLogout }) {
   const [tab, setTab] = useState("ringkasan");
   const [query, setQuery] = useState("");
   const [daerahFilter, setDaerahFilter] = useState("semua");
+  const [statusFilter, setStatusFilter] = useState("semua");
   const [editing, setEditing] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [showBulkImport, setShowBulkImport] = useState(false);
+  const [showBulkStatus, setShowBulkStatus] = useState(false);
   const [viewMonth, setViewMonth] = useState(monthKey());
   const payments = usePayments(viewMonth);
 
@@ -418,14 +585,14 @@ function AdminView({ profile, customers, penagihList, onLogout }) {
     savePaymentRecord({ month: viewMonth, customer, status, keterangan, jumlah, penagihUid: customer.penagihId || "" });
 
   const perDaerah = useMemo(() => [...new Set(customersForMonth.map((c) => c.daerah).filter(Boolean))].sort().map((d) => {
-    const cs = customersForMonth.filter((c) => c.daerah === d);
+    const cs = customersForMonth.filter((c) => c.daerah === d && c.status === "aktif");
     const paidCs = cs.filter((c) => lunas.some((p) => p.customerId === c.id));
     const uang = lunas.filter((p) => cs.some((c) => c.id === p.customerId)).reduce((s, p) => s + p.jumlah, 0);
     return { daerah: d, total: cs.length, sudahBayar: paidCs.length, uang };
   }), [customersForMonth, lunas]);
 
   const perPenagih = useMemo(() => penagihList.map((p) => {
-    const cs = customersForMonth.filter((c) => c.penagihId === p.uid);
+    const cs = customersForMonth.filter((c) => c.penagihId === p.uid && c.status === "aktif");
     const berhasil = lunas.filter((pay) => pay.penagihId === p.uid).length;
     const uang = lunas.filter((pay) => pay.penagihId === p.uid).reduce((s, pay) => s + pay.jumlah, 0);
     const uangCash = payments.filter((pay) => pay.penagihId === p.uid && pay.status === "cash").reduce((s, pay) => s + pay.jumlah, 0);
@@ -435,11 +602,16 @@ function AdminView({ profile, customers, penagihList, onLogout }) {
 
   const filtered = customers
     .filter((c) => (c.nama + c.daerah).toLowerCase().includes(query.toLowerCase()))
-    .filter((c) => daerahFilter === "semua" || c.daerah === daerahFilter);
+    .filter((c) => daerahFilter === "semua" || c.daerah === daerahFilter)
+    .filter((c) => statusFilter === "semua" || c.status === statusFilter);
 
   const saveCustomer = async (c) => {
     if (editing) await updateDoc(doc(db, "customers", editing.id), c);
     else await addDoc(collection(db, "customers"), { ...c, dendaBulanDepan: false, tunggakan: c.tunggakan || 0, createdMonth: monthKey() });
+    setShowForm(false); setEditing(null);
+  };
+  const deleteCustomer = async (c) => {
+    await deleteDoc(doc(db, "customers", c.id));
     setShowForm(false); setEditing(null);
   };
 
@@ -519,6 +691,7 @@ function AdminView({ profile, customers, penagihList, onLogout }) {
               </div>
               <button onClick={() => { setEditing(null); setShowForm(true); }} className="w-10 h-10 rounded-xl flex items-center justify-center text-white" style={{ background: TEAL }}><Plus size={18} /></button>
               <button onClick={() => setShowBulkImport(true)} className="w-10 h-10 rounded-xl flex items-center justify-center text-white" style={{ background: NAVY }} title="Import massal dari Excel"><Upload size={18} /></button>
+              <button onClick={() => setShowBulkStatus(true)} className="w-10 h-10 rounded-xl flex items-center justify-center text-white" style={{ background: AMBER }} title="Ubah status massal (Off/Isolir)"><Ban size={18} /></button>
             </div>
             <div className="flex gap-2 mb-3 overflow-x-auto">
               <button onClick={() => setDaerahFilter("semua")} className="px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap border"
@@ -526,6 +699,12 @@ function AdminView({ profile, customers, penagihList, onLogout }) {
               {daerahList.map((d) => (
                 <button key={d} onClick={() => setDaerahFilter(d)} className="px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap border"
                   style={daerahFilter === d ? { background: NAVY, color: "white", borderColor: NAVY } : { borderColor: "#E5E7EB", color: "#6B7280" }}>{d}</button>
+              ))}
+            </div>
+            <div className="flex gap-2 mb-3 overflow-x-auto">
+              {[["semua","Semua status"],["aktif","Aktif"],["isolir","Isolir"],["off","Off"]].map(([k,label]) => (
+                <button key={k} onClick={() => setStatusFilter(k)} className="px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap border"
+                  style={statusFilter === k ? { background: AMBER, color: "white", borderColor: AMBER } : { borderColor: "#E5E7EB", color: "#6B7280" }}>{label}</button>
               ))}
             </div>
             <div className="space-y-2">
@@ -666,12 +845,19 @@ function AdminView({ profile, customers, penagihList, onLogout }) {
         )}
       </div>
 
-      {showForm && <CustomerForm initial={editing} penagihList={penagihList} onCancel={() => { setShowForm(false); setEditing(null); }} onSave={saveCustomer} />}
+      {showForm && <CustomerForm initial={editing} penagihList={penagihList} onCancel={() => { setShowForm(false); setEditing(null); }} onSave={saveCustomer} onDelete={deleteCustomer} />}
       {showBulkImport && (
         <BulkImportForm
           penagihList={penagihList}
           onCancel={() => setShowBulkImport(false)}
           onImported={() => setShowBulkImport(false)}
+        />
+      )}
+      {showBulkStatus && (
+        <BulkStatusForm
+          customers={customers}
+          onCancel={() => setShowBulkStatus(false)}
+          onImported={() => setShowBulkStatus(false)}
         />
       )}
     </div>
@@ -746,7 +932,8 @@ function PenagihView({ profile, uid, customers, onLogout }) {
   const payments = usePayments(entryMonth);
   const [query, setQuery] = useState("");
   const [daerahFilter, setDaerahFilter] = useState("semua");
-  const mine = customers.filter((c) => c.penagihId === uid && existedInMonth(c, entryMonth));
+  const mine = customers.filter((c) => c.penagihId === uid && c.status === "aktif" && existedInMonth(c, entryMonth));
+  const nonAktif = customers.filter((c) => c.penagihId === uid && c.status !== "aktif" && existedInMonth(c, entryMonth));
   const daerahList = useMemo(() => [...new Set(mine.map((c) => c.daerah).filter(Boolean))].sort(), [mine]);
   const filtered = mine
     .filter((c) => (c.nama + c.daerah).toLowerCase().includes(query.toLowerCase()))
@@ -780,6 +967,7 @@ function PenagihView({ profile, uid, customers, onLogout }) {
           <div className="rounded-2xl bg-white/10 p-3"><div className="text-white/70 text-xs mb-1">Berhasil ditarik</div><div className="text-white font-mono font-semibold">{berhasil}/{mine.length}</div></div>
           <div className="rounded-2xl bg-white/10 p-3"><div className="text-white/70 text-xs mb-1">Estimasi komisi</div><div className="text-white font-mono font-semibold">{rupiah(berhasil * KOMISI_PER_PELANGGAN)}</div></div>
         </div>
+        {nonAktif.length > 0 && <p className="text-white/50 text-xs mt-2">{nonAktif.length} pelanggan isolir/off tidak masuk tugas bulan ini.</p>}
         <div className="mt-2 grid grid-cols-3 gap-2">
           <div className="rounded-2xl bg-white/10 p-3"><div className="text-white/70 text-xs mb-1">Cash</div><div className="text-white font-mono font-semibold text-sm">{rupiah(mineCash)}</div></div>
           <div className="rounded-2xl bg-white/10 p-3"><div className="text-white/70 text-xs mb-1">Transfer</div><div className="text-white font-mono font-semibold text-sm">{rupiah(mineTransfer)}</div></div>
