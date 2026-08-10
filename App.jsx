@@ -136,6 +136,8 @@ function computeArrearsMap(customers, byMonth, orderedMonthsDesc, referenceMonth
   customers.forEach((c) => {
     let streak = 0;
     for (const m of priorMonths) {
+      // Jangan hitung bulan sebelum pelanggan ini terdaftar — dia belum jadi pelanggan saat itu
+      if (c.createdMonth && m < c.createdMonth) break;
       const pay = byMonth.get(m)?.get(c.id);
       const paidFull = pay && (pay.status === "cash" || pay.status === "transfer");
       if (paidFull) break;
@@ -316,6 +318,7 @@ function BulkImportForm({ onCancel, onImported, penagihList }) {
             status: "aktif",
             penagihId: uid || "",
             dendaBulanDepan: false,
+            createdMonth: monthKey(),
           });
           count++;
         });
@@ -446,7 +449,7 @@ function AdminView({ profile, customers, penagihList, onLogout }) {
 
   const saveCustomer = async (c) => {
     if (editing) await updateDoc(doc(db, "customers", editing.id), c);
-    else await addDoc(collection(db, "customers"), { ...c, dendaBulanDepan: false });
+    else await addDoc(collection(db, "customers"), { ...c, dendaBulanDepan: false, createdMonth: monthKey() });
     setShowForm(false); setEditing(null);
   };
 
