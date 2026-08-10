@@ -22,6 +22,9 @@ const monthLabel = (key) => {
   const names = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
   return `${names[parseInt(m, 10) - 1]} ${y}`;
 };
+// Pelanggan dianggap "sudah terdaftar" pada suatu bulan kalau createdMonth-nya <= bulan itu (format YYYY-MM bisa dibandingkan string langsung).
+// Pelanggan lama tanpa field createdMonth dianggap sudah ada sejak dulu (selalu masuk hitungan).
+const existedInMonth = (customer, monthKeyStr) => !customer.createdMonth || customer.createdMonth <= monthKeyStr;
 const lastMonths = (n = 6) => {
   const out = [];
   const d = new Date();
@@ -390,14 +393,17 @@ function AdminView({ profile, customers, penagihList, onLogout }) {
   const payments = usePayments(viewMonth);
 
   const daerahList = useMemo(() => [...new Set(customers.map((c) => c.daerah).filter(Boolean))].sort(), [customers]);
+  // Pelanggan yang sudah terdaftar sampai dengan viewMonth — dipakai untuk semua statistik/riwayat bulan itu,
+  // supaya pelanggan yang baru masuk bulan-bulan berikutnya tidak ikut terhitung di bulan-bulan sebelumnya.
+  const customersForMonth = useMemo(() => customers.filter((c) => existedInMonth(c, viewMonth)), [customers, viewMonth]);
   const paidMap = new Map(payments.map((p) => [p.customerId, p]));
   const lunas = payments.filter((p) => p.status === "cash" || p.status === "transfer");
   const totalCash = payments.filter((p) => p.status === "cash").reduce((s, p) => s + p.jumlah, 0);
   const totalTransfer = payments.filter((p) => p.status === "transfer").reduce((s, p) => s + p.jumlah, 0);
   const totalKurang = payments.filter((p) => p.status === "kurang").reduce((s, p) => s + p.jumlah, 0);
-  const isolirCount = customers.filter((c) => c.status === "isolir" || c.status === "off").length;
-  const belumBayar = customers.filter((c) => c.status === "aktif" && !paidMap.has(c.id));
-  const belumBayarTanpaKet = customers.filter((c) => {
+  const isolirCount = customersForMonth.filter((c) => c.status === "isolir" || c.status === "off").length;
+  const belumBayar = customersForMonth.filter((c) => c.status === "aktif" && !paidMap.has(c.id));
+  const belumBayarTanpaKet = customersForMonth.filter((c) => {
     if (c.status !== "aktif") return false;
     const pay = paidMap.get(c.id);
     if (!pay) return true; // belum ada catatan sama sekali
@@ -411,15 +417,15 @@ function AdminView({ profile, customers, penagihList, onLogout }) {
   const saveRiwayat = (customer, status, keterangan, jumlah) =>
     savePaymentRecord({ month: viewMonth, customer, status, keterangan, jumlah, penagihUid: customer.penagihId || "" });
 
-  const perDaerah = useMemo(() => daerahList.map((d) => {
-    const cs = customers.filter((c) => c.daerah === d);
+  const perDaerah = useMemo(() => [...new Set(customersForMonth.map((c) => c.daerah).filter(Boolean))].sort().map((d) => {
+    const cs = customersForMonth.filter((c) => c.daerah === d);
     const paidCs = cs.filter((c) => lunas.some((p) => p.customerId === c.id));
     const uang = lunas.filter((p) => cs.some((c) => c.id === p.customerId)).reduce((s, p) => s + p.jumlah, 0);
     return { daerah: d, total: cs.length, sudahBayar: paidCs.length, uang };
-  }), [daerahList, customers, lunas]);
+  }), [customersForMonth, lunas]);
 
   const perPenagih = useMemo(() => penagihList.map((p) => {
-    const cs = customers.filter((c) => c.penagihId === p.uid);
+    const cs = customersForMonth.filter((c) => c.penagihId === p.uid);
     const berhasil = lunas.filter((pay) => pay.penagihId === p.uid).length;
     const uang = lunas.filter((pay) => pay.penagihId === p.uid).reduce((s, pay) => s + pay.jumlah, 0);
     const uangCash = payments.filter((pay) => pay.penagihId === p.uid && pay.status === "cash").reduce((s, pay) => s + pay.jumlah, 0);
@@ -459,7 +465,7 @@ function AdminView({ profile, customers, penagihList, onLogout }) {
         {tab === "ringkasan" && (
           <>
             <div className="flex gap-3 flex-wrap mb-3">
-              <StatCard icon={Users} label="Total Pelanggan" value={customers.length} />
+              <StatCard icon={Users} label={`Total Pelanggan ${monthLabel(viewMonth)}`} value={customersForMonth.length} />
               <StatCard icon={Wallet} label={`Pendapatan ${monthLabel(viewMonth)}`} value={rupiah(totalCash + totalTransfer)} accent={TEAL} sub={`${lunas.length} pelanggan lunas`} />
               <StatCard icon={Ban} label="Isolir / Off" value={isolirCount} accent={AMBER} />
             </div>
@@ -589,7 +595,7 @@ function AdminView({ profile, customers, penagihList, onLogout }) {
             </div>
             <div className="flex gap-3 flex-wrap mb-3">
               <StatCard icon={Wallet} label={`Pendapatan ${monthLabel(viewMonth)}`} value={rupiah(totalCash + totalTransfer)} accent={TEAL} />
-              <StatCard icon={Users} label="Lunas" value={`${lunas.length}/${customers.length}`} />
+              <StatCard icon={Users} label="Lunas" value={`${lunas.length}/${customersForMonth.length}`} />
             </div>
             <div className="flex gap-3 flex-wrap mb-3">
               <StatCard icon={Wallet} label="Total Cash" value={rupiah(totalCash)} accent={TEAL} />
@@ -740,7 +746,7 @@ function PenagihView({ profile, uid, customers, onLogout }) {
   const payments = usePayments(entryMonth);
   const [query, setQuery] = useState("");
   const [daerahFilter, setDaerahFilter] = useState("semua");
-  const mine = customers.filter((c) => c.penagihId === uid);
+  const mine = customers.filter((c) => c.penagihId === uid && existedInMonth(c, entryMonth));
   const daerahList = useMemo(() => [...new Set(mine.map((c) => c.daerah).filter(Boolean))].sort(), [mine]);
   const filtered = mine
     .filter((c) => (c.nama + c.daerah).toLowerCase().includes(query.toLowerCase()))
