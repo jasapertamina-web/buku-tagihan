@@ -979,13 +979,14 @@ function PenagihView({ profile, uid, customers, onLogout }) {
     .filter((c) => daerahFilter === "semua" || c.daerah === daerahFilter)
     .filter((c) => {
       if (bayarFilter === "semua") return true;
-      if (bayarFilter === "sudah") return paidMap.has(c.id);
-      if (bayarFilter === "belum") return !paidMap.has(c.id);
+      if (bayarFilter === "sudah") return isLunasStatus(paidMap.get(c.id)?.status);
+      if (bayarFilter === "belum") return !isLunasStatus(paidMap.get(c.id)?.status);
       if (bayarFilter === "dobel") return !!c.dendaBulanDepan;
       if (bayarFilter === "dobel_lunas") return paidMap.get(c.id)?.status === "lunas_dobel";
       return true;
     });
   const sudahDicatat = mine.filter((c) => paidMap.has(c.id)).length;
+  const sudahBayarCount = mine.filter((c) => isLunasStatus(paidMap.get(c.id)?.status)).length;
   const mintaDobelCount = mine.filter((c) => c.dendaBulanDepan).length;
   const bayarDobelCount = mine.filter((c) => paidMap.get(c.id)?.status === "lunas_dobel").length;
   const berhasil = mine.filter((c) => { const p = paidMap.get(c.id); return p && isLunasStatus(p.status); }).length;
@@ -1061,8 +1062,8 @@ function PenagihView({ profile, uid, customers, onLogout }) {
         <div className="flex gap-2 mb-3 overflow-x-auto">
           {[
             ["semua", `Semua (${mine.length})`, NAVY],
-            ["sudah", `Sudah Membayar (${sudahDicatat})`, TEAL],
-            ["belum", `Belum Membayar (${mine.length - sudahDicatat})`, AMBER],
+            ["sudah", `Sudah Membayar (${sudahBayarCount})`, TEAL],
+            ["belum", `Belum Membayar (${mine.length - sudahBayarCount})`, AMBER],
             ["dobel", `Minta Dobel Bln Depan (${mintaDobelCount})`, "#B0362A"],
             ["dobel_lunas", `Sudah Bayar Dobel (${bayarDobelCount})`, "#7C2D12"],
           ].map(([k, label, color]) => (
