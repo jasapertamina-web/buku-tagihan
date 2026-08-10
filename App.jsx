@@ -985,8 +985,8 @@ function PenagihView({ profile, uid, customers, onLogout }) {
       if (bayarFilter === "dobel_lunas") return paidMap.get(c.id)?.status === "lunas_dobel";
       return true;
     });
-  const sudahDicatat = mine.filter((c) => paidMap.has(c.id)).length;
   const sudahBayarCount = mine.filter((c) => isLunasStatus(paidMap.get(c.id)?.status)).length;
+  const sudahDicatat = sudahBayarCount;
   const mintaDobelCount = mine.filter((c) => c.dendaBulanDepan).length;
   const bayarDobelCount = mine.filter((c) => paidMap.get(c.id)?.status === "lunas_dobel").length;
   const berhasil = mine.filter((c) => { const p = paidMap.get(c.id); return p && isLunasStatus(p.status); }).length;
@@ -1030,7 +1030,7 @@ function PenagihView({ profile, uid, customers, onLogout }) {
         {showDetail && (
           <div className="mt-2 space-y-2">
             <div className="grid grid-cols-2 gap-2">
-              <div className="rounded-2xl bg-white/10 p-3"><div className="text-white/70 text-xs mb-1">Sudah dicatat</div><div className="text-white font-mono font-semibold">{sudahDicatat}/{mine.length}</div></div>
+              <div className="rounded-2xl bg-white/10 p-3"><div className="text-white/70 text-xs mb-1">Sudah membayar</div><div className="text-white font-mono font-semibold">{sudahDicatat}/{mine.length}</div></div>
               <div className="rounded-2xl bg-white/10 p-3"><div className="text-white/70 text-xs mb-1">Berhasil ditarik</div><div className="text-white font-mono font-semibold">{berhasil}/{mine.length}</div></div>
             </div>
             {nonAktif.length > 0 && <p className="text-white/50 text-xs">{nonAktif.length} pelanggan isolir/off tidak masuk tugas bulan ini.</p>}
