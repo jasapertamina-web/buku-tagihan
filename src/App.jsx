@@ -3,7 +3,7 @@ import { initializeApp } from "firebase/app";
 import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut } from "firebase/auth";
 import { getFirestore, collection, doc, getDoc, setDoc, addDoc, updateDoc, deleteDoc, onSnapshot, query, where, writeBatch } from "firebase/firestore";
 import { firebaseConfig } from "./firebaseConfig";
-import { Search, Plus, X, Users, Wallet, Ban, LogOut, Loader2, Lock, Mail, Pencil, History, ShieldCheck, Upload, Trash2, CheckCircle2 } from "lucide-react";
+import { Search, Plus, X, Users, Wallet, Ban, LogOut, Loader2, Lock, Mail, Pencil, History, ShieldCheck, Upload, Trash2, CheckCircle2, ChevronDown, ChevronUp } from "lucide-react";
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -907,12 +907,13 @@ function PayRow({ customer, existing, onSave }) {
 
   if (!editingRow && existing) {
     const st = STATUS_LABEL[existing.status];
+    const isPaid = isLunasStatus(existing.status);
     return (
-      <div className="rounded-xl bg-white border border-gray-100 p-3" style={{ borderLeft: `4px solid ${TEAL}` }}>
+      <div className="rounded-xl bg-white border border-gray-100 p-3" style={{ borderLeft: `4px solid ${st?.color || AMBER}` }}>
         <div className="flex items-center justify-between">
           <div>
             <div className="text-sm font-medium flex items-center gap-1.5" style={{ color: INK }}>
-              <CheckCircle2 size={14} color={TEAL} />
+              {isPaid && <CheckCircle2 size={14} color={TEAL} />}
               {customer.nama}<TunggakanEditor customer={customer} />
             </div>
             <div className="text-xs text-gray-400">{customer.daerah}{existing.jumlah > 0 && <> · {rupiah(existing.jumlah)}</>}</div>
@@ -928,7 +929,7 @@ function PayRow({ customer, existing, onSave }) {
   }
 
   return (
-    <div className="rounded-xl bg-white border border-gray-100 p-3" style={{ borderLeft: `4px solid ${existing ? TEAL : AMBER}` }}>
+    <div className="rounded-xl bg-white border border-gray-100 p-3" style={{ borderLeft: `4px solid ${existing ? (STATUS_LABEL[existing.status]?.color || TEAL) : "#D1D5DB"}` }}>
       <div className="text-sm font-medium flex items-center gap-1.5" style={{ color: INK }}>
         {customer.nama} {customer.status !== "aktif" && <Badge color={AMBER} bg="#FBEAE6">{customer.status}</Badge>}
         <TunggakanEditor customer={customer} />
@@ -964,6 +965,7 @@ function PayRow({ customer, existing, onSave }) {
 
 function PenagihView({ profile, uid, customers, onLogout }) {
   const [entryMonth, setEntryMonth] = useState(monthKey());
+  const [showDetail, setShowDetail] = useState(false);
   const payments = usePayments(entryMonth);
   const [query, setQuery] = useState("");
   const [daerahFilter, setDaerahFilter] = useState("semua");
@@ -980,10 +982,12 @@ function PenagihView({ profile, uid, customers, onLogout }) {
       if (bayarFilter === "sudah") return paidMap.has(c.id);
       if (bayarFilter === "belum") return !paidMap.has(c.id);
       if (bayarFilter === "dobel") return !!c.dendaBulanDepan;
+      if (bayarFilter === "dobel_lunas") return paidMap.get(c.id)?.status === "lunas_dobel";
       return true;
     });
   const sudahDicatat = mine.filter((c) => paidMap.has(c.id)).length;
   const mintaDobelCount = mine.filter((c) => c.dendaBulanDepan).length;
+  const bayarDobelCount = mine.filter((c) => paidMap.get(c.id)?.status === "lunas_dobel").length;
   const berhasil = mine.filter((c) => { const p = paidMap.get(c.id); return p && isLunasStatus(p.status); }).length;
   // Unit komisi: pembayaran dobel (bulan ini + tunggakan bulan lalu sekaligus) dihitung 2 unit komisi.
   const komisiUnits = mine.reduce((sum, c) => {
@@ -1015,18 +1019,28 @@ function PenagihView({ profile, uid, customers, onLogout }) {
         <select value={entryMonth} onChange={(e) => setEntryMonth(e.target.value)} className="w-full mt-3 border border-white/20 bg-white/10 text-white rounded-lg px-3 py-2 text-sm outline-none">
           {lastMonths(6).map((m) => <option key={m} value={m} style={{ color: INK }}>{monthLabel(m)}{m === monthKey() ? " (bulan ini)" : ""}</option>)}
         </select>
-        <div className="mt-3 grid grid-cols-2 gap-2">
-          <div className="rounded-2xl bg-white/10 p-3"><div className="text-white/70 text-xs mb-1">Sudah dicatat</div><div className="text-white font-mono font-semibold">{sudahDicatat}/{mine.length}</div></div>
-          <div className="rounded-2xl bg-white/10 p-3"><div className="text-white/70 text-xs mb-1">Berhasil ditarik</div><div className="text-white font-mono font-semibold">{berhasil}/{mine.length}</div></div>
-        </div>
-        <div className="mt-2 rounded-2xl bg-white/10 p-3"><div className="text-white/70 text-xs mb-1">Estimasi komisi</div><div className="text-white font-mono font-semibold">{rupiah(komisiUnits * KOMISI_PER_PELANGGAN)}</div></div>
-        {nonAktif.length > 0 && <p className="text-white/50 text-xs mt-2">{nonAktif.length} pelanggan isolir/off tidak masuk tugas bulan ini.</p>}
-        <div className="mt-2 grid grid-cols-2 gap-2">
-          <div className="rounded-2xl bg-white/10 p-3"><div className="text-white/70 text-xs mb-1">Cash</div><div className="text-white font-mono font-semibold text-sm">{rupiah(mineCash)}</div></div>
-          <div className="rounded-2xl bg-white/10 p-3"><div className="text-white/70 text-xs mb-1">Transfer</div><div className="text-white font-mono font-semibold text-sm">{rupiah(mineTransfer)}</div></div>
-          <div className="rounded-2xl bg-white/10 p-3"><div className="text-white/70 text-xs mb-1">Kurang</div><div className="text-white font-mono font-semibold text-sm">{rupiah(mineKurang)}</div></div>
-          <div className="rounded-2xl bg-white/10 p-3"><div className="text-white/70 text-xs mb-1">Bayar Dobel</div><div className="text-white font-mono font-semibold text-sm">{rupiah(mineDobel)}</div></div>
-        </div>
+        <button onClick={() => setShowDetail((v) => !v)} className="w-full mt-3 flex items-center justify-between rounded-2xl bg-white/10 p-3">
+          <div className="flex items-center gap-4 text-xs text-white/80">
+            <span>Tercatat <b className="text-white font-mono">{sudahDicatat}/{mine.length}</b></span>
+            <span>Komisi <b className="text-white font-mono">{rupiah(komisiUnits * KOMISI_PER_PELANGGAN)}</b></span>
+          </div>
+          {showDetail ? <ChevronUp size={16} color="white" /> : <ChevronDown size={16} color="white" />}
+        </button>
+        {showDetail && (
+          <div className="mt-2 space-y-2">
+            <div className="grid grid-cols-2 gap-2">
+              <div className="rounded-2xl bg-white/10 p-3"><div className="text-white/70 text-xs mb-1">Sudah dicatat</div><div className="text-white font-mono font-semibold">{sudahDicatat}/{mine.length}</div></div>
+              <div className="rounded-2xl bg-white/10 p-3"><div className="text-white/70 text-xs mb-1">Berhasil ditarik</div><div className="text-white font-mono font-semibold">{berhasil}/{mine.length}</div></div>
+            </div>
+            {nonAktif.length > 0 && <p className="text-white/50 text-xs">{nonAktif.length} pelanggan isolir/off tidak masuk tugas bulan ini.</p>}
+            <div className="grid grid-cols-2 gap-2">
+              <div className="rounded-2xl bg-white/10 p-3"><div className="text-white/70 text-xs mb-1">Cash</div><div className="text-white font-mono font-semibold text-sm">{rupiah(mineCash)}</div></div>
+              <div className="rounded-2xl bg-white/10 p-3"><div className="text-white/70 text-xs mb-1">Transfer</div><div className="text-white font-mono font-semibold text-sm">{rupiah(mineTransfer)}</div></div>
+              <div className="rounded-2xl bg-white/10 p-3"><div className="text-white/70 text-xs mb-1">Kurang</div><div className="text-white font-mono font-semibold text-sm">{rupiah(mineKurang)}</div></div>
+              <div className="rounded-2xl bg-white/10 p-3"><div className="text-white/70 text-xs mb-1">Bayar Dobel</div><div className="text-white font-mono font-semibold text-sm">{rupiah(mineDobel)}</div></div>
+            </div>
+          </div>
+        )}
       </div>
       <div className="p-5">
         {!isCurrentMonth && (
@@ -1049,7 +1063,8 @@ function PenagihView({ profile, uid, customers, onLogout }) {
             ["semua", `Semua (${mine.length})`, NAVY],
             ["sudah", `Sudah Membayar (${sudahDicatat})`, TEAL],
             ["belum", `Belum Membayar (${mine.length - sudahDicatat})`, AMBER],
-            ["dobel", `Minta Dobel (${mintaDobelCount})`, "#B0362A"],
+            ["dobel", `Minta Dobel Bln Depan (${mintaDobelCount})`, "#B0362A"],
+            ["dobel_lunas", `Sudah Bayar Dobel (${bayarDobelCount})`, "#7C2D12"],
           ].map(([k, label, color]) => (
             <button key={k} onClick={() => setBayarFilter(k)} className="px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap border"
               style={bayarFilter === k ? { background: color, color: "white", borderColor: color } : { borderColor: "#E5E7EB", color: "#6B7280" }}>{label}</button>
