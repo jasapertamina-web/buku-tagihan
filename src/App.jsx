@@ -31,17 +31,6 @@ const lastMonths = (n = 6) => {
   }
   return out;
 };
-// Daftar n bulan mundur dari startKey (termasuk startKey sendiri), untuk hitung tunggakan relatif ke bulan yang sedang dilihat
-const monthsFrom = (startKey, n = 7) => {
-  const [y, m] = startKey.split("-").map(Number);
-  const d = new Date(y, m - 1, 1);
-  const out = [];
-  for (let i = 0; i < n; i++) {
-    out.push(monthKey(d));
-    d.setMonth(d.getMonth() - 1);
-  }
-  return out;
-};
 const rupiah = (n) => "Rp" + Number(n || 0).toLocaleString("id-ID");
 
 const STATUS_LABEL = {
@@ -107,45 +96,10 @@ function usePenagihList() {
   return list;
 }
 
-// Ambil data pembayaran untuk beberapa bulan sekaligus (dipakai untuk hitung tunggakan)
-function usePaymentsRange(months) {
-  const key = months.join(",");
-  const [byMonth, setByMonth] = useState(new Map());
-  useEffect(() => {
-    if (months.length === 0) return;
-    const q = query(collection(db, "payments"), where("month", "in", months));
-    return onSnapshot(q, (snap) => {
-      const map = new Map();
-      months.forEach((m) => map.set(m, new Map()));
-      snap.docs.forEach((d) => {
-        const data = d.data();
-        if (!map.has(data.month)) map.set(data.month, new Map());
-        map.get(data.month).set(data.customerId, data);
-      });
-      setByMonth(map);
-    });
-  }, [key]);
-  return byMonth;
-}
-
-// Hitung berapa bulan berturut-turut (sebelum referenceMonth) seorang pelanggan belum lunas
-function computeArrearsMap(customers, byMonth, orderedMonthsDesc, referenceMonth) {
-  const idx = orderedMonthsDesc.indexOf(referenceMonth);
-  const priorMonths = idx >= 0 ? orderedMonthsDesc.slice(idx + 1) : orderedMonthsDesc;
-  const map = new Map();
-  customers.forEach((c) => {
-    let streak = 0;
-    for (const m of priorMonths) {
-      // Jangan hitung bulan sebelum pelanggan ini terdaftar — dia belum jadi pelanggan saat itu
-      if (c.createdMonth && m < c.createdMonth) break;
-      const pay = byMonth.get(m)?.get(c.id);
-      const paidFull = pay && (pay.status === "cash" || pay.status === "transfer");
-      if (paidFull) break;
-      streak++;
-    }
-    map.set(c.id, streak);
-  });
-  return map;
+// Tunggakan sekarang adalah angka manual per pelanggan (field `tunggakan` di dokumen customer),
+// diisi/diubah langsung oleh Admin atau Penagih — tidak lagi dihitung otomatis dari riwayat pembayaran.
+async function saveTunggakan(customerId, value) {
+  await updateDoc(doc(db, "customers", customerId), { tunggakan: Math.max(0, Number(value) || 0) });
 }
 
 async function savePaymentRecord({ month, customer, status, keterangan, jumlah, penagihUid }) {
@@ -160,6 +114,38 @@ async function savePaymentRecord({ month, customer, status, keterangan, jumlah, 
   } else if (status === "cash" || status === "transfer") {
     await updateDoc(doc(db, "customers", customer.id), { dendaBulanDepan: false });
   }
+}
+
+// ---------- Editor Tunggakan (manual, bisa diubah Admin & Penagih) ----------
+function TunggakanEditor({ customer }) {
+  const [editing, setEditing] = useState(false);
+  const [val, setVal] = useState(String(customer.tunggakan || 0));
+  const current = customer.tunggakan || 0;
+
+  const submit = async (e) => {
+    e.stopPropagation();
+    await saveTunggakan(customer.id, val);
+    setEditing(false);
+  };
+
+  if (editing) {
+    return (
+      <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+        <input type="number" inputMode="numeric" min="0" value={val} onChange={(e) => setVal(e.target.value)}
+          className="w-14 border border-gray-200 rounded-lg px-2 py-1 text-xs outline-none" autoFocus />
+        <button onClick={submit} className="text-xs font-semibold px-2 py-1 rounded-lg text-white" style={{ background: TEAL }}>OK</button>
+        <button onClick={(e) => { e.stopPropagation(); setVal(String(current)); setEditing(false); }} className="text-xs text-gray-400 px-1">Batal</button>
+      </div>
+    );
+  }
+
+  return (
+    <button onClick={(e) => { e.stopPropagation(); setEditing(true); }} className="inline-flex">
+      {current > 0
+        ? <Badge color="#B0362A" bg="#FBEAE6">Nunggak {current}x · Ubah</Badge>
+        : <span className="text-xs text-gray-300">Set tunggakan</span>}
+    </button>
+  );
 }
 
 // ---------- UI kecil ----------
@@ -230,7 +216,7 @@ function LoginScreen({ error }) {
 
 // ---------- Form tambah/ubah pelanggan (khusus Admin) ----------
 function CustomerForm({ onSave, onCancel, penagihList, initial }) {
-  const [form, setForm] = useState(initial || { nama: "", daerah: "", status: "aktif", penagihId: penagihList[0]?.uid || "" });
+  const [form, setForm] = useState(initial || { nama: "", daerah: "", status: "aktif", penagihId: penagihList[0]?.uid || "", tunggakan: 0 });
   return (
     <div className="fixed inset-0 z-20 flex items-end sm:items-center justify-center bg-black/30 p-0 sm:p-6">
       <div className="w-full sm:max-w-md bg-white rounded-t-2xl sm:rounded-2xl p-5 max-h-[90vh] overflow-y-auto">
@@ -257,8 +243,14 @@ function CustomerForm({ onSave, onCancel, penagihList, initial }) {
                 </button>
               ))}
             </div></div>
+          <div><label className="text-xs text-gray-500">Tunggakan (bulan)</label>
+            <input type="number" inputMode="numeric" min="0" value={form.tunggakan ?? 0}
+              onChange={(e) => setForm({ ...form, tunggakan: Number(e.target.value) })}
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm mt-1 outline-none focus:border-gray-400" />
+            <p className="text-xs text-gray-400 mt-1">Diisi manual — tidak lagi otomatis. Sekarang mulai dari 0 untuk semua pelanggan.</p>
+          </div>
         </div>
-        <button onClick={() => onSave({ ...form, harga: 0 })} disabled={!form.nama || !form.daerah}
+        <button onClick={() => onSave({ ...form, harga: 0, tunggakan: Number(form.tunggakan) || 0 })} disabled={!form.nama || !form.daerah}
           className="w-full mt-5 py-3 rounded-xl text-white font-semibold text-sm disabled:opacity-40" style={{ background: TEAL }}>
           Simpan
         </button>
@@ -318,6 +310,7 @@ function BulkImportForm({ onCancel, onImported, penagihList }) {
             status: "aktif",
             penagihId: uid || "",
             dendaBulanDepan: false,
+            tunggakan: 0,
             createdMonth: monthKey(),
           });
           count++;
@@ -396,15 +389,6 @@ function AdminView({ profile, customers, penagihList, onLogout }) {
   const [viewMonth, setViewMonth] = useState(monthKey());
   const payments = usePayments(viewMonth);
 
-  // Tunggakan: relatif ke bulan sekarang (dipakai di tab Ringkasan & Pelanggan)
-  const arrearsMonthsNow = useMemo(() => monthsFrom(monthKey(), 7), []);
-  const arrearsByMonthNow = usePaymentsRange(arrearsMonthsNow);
-  const arrearsMapNow = useMemo(() => computeArrearsMap(customers, arrearsByMonthNow, arrearsMonthsNow, monthKey()), [customers, arrearsByMonthNow, arrearsMonthsNow]);
-  // Tunggakan: relatif ke bulan yang sedang dilihat di tab Riwayat
-  const arrearsMonthsView = useMemo(() => monthsFrom(viewMonth, 7), [viewMonth]);
-  const arrearsByMonthView = usePaymentsRange(arrearsMonthsView);
-  const arrearsMapView = useMemo(() => computeArrearsMap(customers, arrearsByMonthView, arrearsMonthsView, viewMonth), [customers, arrearsByMonthView, arrearsMonthsView, viewMonth]);
-
   const daerahList = useMemo(() => [...new Set(customers.map((c) => c.daerah).filter(Boolean))].sort(), [customers]);
   const paidMap = new Map(payments.map((p) => [p.customerId, p]));
   const lunas = payments.filter((p) => p.status === "cash" || p.status === "transfer");
@@ -449,7 +433,7 @@ function AdminView({ profile, customers, penagihList, onLogout }) {
 
   const saveCustomer = async (c) => {
     if (editing) await updateDoc(doc(db, "customers", editing.id), c);
-    else await addDoc(collection(db, "customers"), { ...c, dendaBulanDepan: false, createdMonth: monthKey() });
+    else await addDoc(collection(db, "customers"), { ...c, dendaBulanDepan: false, tunggakan: c.tunggakan || 0, createdMonth: monthKey() });
     setShowForm(false); setEditing(null);
   };
 
@@ -499,7 +483,7 @@ function AdminView({ profile, customers, penagihList, onLogout }) {
               <div className="font-semibold text-sm mb-3" style={{ color: NAVY }}>Belum bayar bulan ini ({belumBayar.length})</div>
               {belumBayar.slice(0, 8).map((c) => (
                 <div key={c.id} className="flex items-center justify-between py-2 border-b border-gray-50 last:border-0">
-                  <div><div className="text-sm font-medium flex items-center gap-1.5" style={{ color: INK }}>{c.nama}{arrearsMapNow.get(c.id) > 0 && <Badge color="#B0362A" bg="#FBEAE6">Nunggak {arrearsMapNow.get(c.id)}x</Badge>}</div><div className="text-xs text-gray-400">{c.daerah}</div></div>
+                  <div><div className="text-sm font-medium flex items-center gap-1.5" style={{ color: INK }}>{c.nama}<TunggakanEditor customer={c} /></div><div className="text-xs text-gray-400">{c.daerah}</div></div>
                 </div>
               ))}
               {belumBayar.length === 0 && <p className="text-xs text-gray-400">Semua pelanggan aktif sudah bayar bulan ini.</p>}
@@ -511,7 +495,7 @@ function AdminView({ profile, customers, penagihList, onLogout }) {
                 const p = penagihList.find((pp) => pp.uid === c.penagihId);
                 return (
                   <div key={c.id} className="flex items-center justify-between py-2 border-b border-gray-50 last:border-0">
-                    <div><div className="text-sm font-medium flex items-center gap-1.5" style={{ color: INK }}>{c.nama}{arrearsMapNow.get(c.id) > 0 && <Badge color="#B0362A" bg="#FBEAE6">Nunggak {arrearsMapNow.get(c.id)}x</Badge>}</div><div className="text-xs text-gray-400">{c.daerah} · Penagih: {p?.nama || "-"}</div></div>
+                    <div><div className="text-sm font-medium flex items-center gap-1.5" style={{ color: INK }}>{c.nama}<TunggakanEditor customer={c} /></div><div className="text-xs text-gray-400">{c.daerah} · Penagih: {p?.nama || "-"}</div></div>
                   </div>
                 );
               })}
@@ -546,7 +530,7 @@ function AdminView({ profile, customers, penagihList, onLogout }) {
                   <button key={c.id} onClick={() => { setEditing(c); setShowForm(true); }} className="w-full text-left rounded-xl bg-white border border-gray-100 p-3">
                     <div className="flex items-center justify-between">
                       <div>
-                        <div className="text-sm font-medium flex items-center gap-1.5" style={{ color: INK }}>{c.nama} <Pencil size={11} color="#C4C9D2" />{arrearsMapNow.get(c.id) > 0 && <Badge color="#B0362A" bg="#FBEAE6">Nunggak {arrearsMapNow.get(c.id)}x</Badge>}</div>
+                        <div className="text-sm font-medium flex items-center gap-1.5" style={{ color: INK }}>{c.nama} <Pencil size={11} color="#C4C9D2" /><TunggakanEditor customer={c} /></div>
                         <div className="text-xs text-gray-400">{c.daerah}{c.dendaBulanDepan && <span style={{ color: AMBER }}> · Dobel bulan depan</span>}</div>
                       </div>
                       <div className="flex flex-col items-end gap-1">
@@ -643,7 +627,7 @@ function AdminView({ profile, customers, penagihList, onLogout }) {
               {bayarKurangList.map((p) => (
                 <div key={p.id} className="flex items-center justify-between py-2 border-b border-gray-50 last:border-0">
                   <div>
-                    <div className="text-sm font-medium flex items-center gap-1.5" style={{ color: INK }}>{p.customer?.nama || "-"}{arrearsMapView.get(p.customerId) > 0 && <Badge color="#B0362A" bg="#FBEAE6">Nunggak {arrearsMapView.get(p.customerId)}x</Badge>}</div>
+                    <div className="text-sm font-medium flex items-center gap-1.5" style={{ color: INK }}>{p.customer?.nama || "-"}{p.customer && <TunggakanEditor customer={p.customer} />}</div>
                     <div className="text-xs text-gray-400">{p.customer?.daerah}{p.keterangan && <> · "{p.keterangan}"</>}</div>
                   </div>
                   <div className="text-xs font-mono font-semibold" style={{ color: "#B98900" }}>{rupiah(p.jumlah)}</div>
@@ -666,7 +650,7 @@ function AdminView({ profile, customers, penagihList, onLogout }) {
               <div className="font-semibold text-sm mb-1" style={{ color: AMBER }}>Belum Bayar & Tanpa Keterangan ({belumBayarTanpaKet.length})</div>
               <p className="text-xs text-gray-400 mb-3">Bisa langsung dicatat di sini kalau ternyata pelanggan ini bayar belakangan — termasuk untuk bulan yang sudah lewat.</p>
               <div className="space-y-2">
-                {belumBayarTanpaKet.map((c) => <PayRow key={c.id} customer={c} existing={paidMap.get(c.id)} onSave={saveRiwayat} arrears={arrearsMapView.get(c.id) || 0} />)}
+                {belumBayarTanpaKet.map((c) => <PayRow key={c.id} customer={c} existing={paidMap.get(c.id)} onSave={saveRiwayat} />)}
                 {belumBayarTanpaKet.length === 0 && <p className="text-xs text-gray-400">Semua pelanggan yang belum bayar sudah punya keterangan.</p>}
               </div>
             </div>
@@ -689,7 +673,7 @@ function AdminView({ profile, customers, penagihList, onLogout }) {
 }
 
 // ---------- Panel Penagih ----------
-function PayRow({ customer, existing, onSave, arrears = 0 }) {
+function PayRow({ customer, existing, onSave }) {
   const [editingRow, setEditingRow] = useState(!existing);
   const [status, setStatus] = useState(existing?.status || "");
   const [keterangan, setKeterangan] = useState(existing?.keterangan || "");
@@ -709,7 +693,7 @@ function PayRow({ customer, existing, onSave, arrears = 0 }) {
       <div className="rounded-xl bg-white border border-gray-100 p-3">
         <div className="flex items-center justify-between">
           <div>
-            <div className="text-sm font-medium flex items-center gap-1.5" style={{ color: INK }}>{customer.nama}{arrears > 0 && <Badge color="#B0362A" bg="#FBEAE6">Nunggak {arrears}x</Badge>}</div>
+            <div className="text-sm font-medium flex items-center gap-1.5" style={{ color: INK }}>{customer.nama}<TunggakanEditor customer={customer} /></div>
             <div className="text-xs text-gray-400">{customer.daerah}{existing.jumlah > 0 && <> · {rupiah(existing.jumlah)}</>}</div>
             {existing.keterangan && <div className="text-xs text-gray-400 italic mt-1">"{existing.keterangan}"</div>}
           </div>
@@ -726,7 +710,7 @@ function PayRow({ customer, existing, onSave, arrears = 0 }) {
     <div className="rounded-xl bg-white border border-gray-100 p-3">
       <div className="text-sm font-medium flex items-center gap-1.5" style={{ color: INK }}>
         {customer.nama} {customer.status !== "aktif" && <Badge color={AMBER} bg="#FBEAE6">{customer.status}</Badge>}
-        {arrears > 0 && <Badge color="#B0362A" bg="#FBEAE6">Nunggak {arrears}x</Badge>}
+        <TunggakanEditor customer={customer} />
       </div>
       <div className="text-xs text-gray-400 mb-2">{customer.daerah}{customer.dendaBulanDepan && <span style={{ color: AMBER }}> · Dobel bulan depan</span>}</div>
       <select value={status} onChange={(e) => setStatus(e.target.value)} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm mb-2 outline-none">
@@ -772,9 +756,6 @@ function PenagihView({ profile, uid, customers, onLogout }) {
     const isBelum = p.status === "belum" || p.status === "belum_dobel";
     return isBelum && !(p.keterangan && p.keterangan.trim());
   });
-  const arrearsMonths = useMemo(() => monthsFrom(entryMonth, 7), [entryMonth]);
-  const arrearsByMonth = usePaymentsRange(arrearsMonths);
-  const arrearsMap = useMemo(() => computeArrearsMap(mine, arrearsByMonth, arrearsMonths, entryMonth), [mine, arrearsByMonth, arrearsMonths, entryMonth]);
   const isCurrentMonth = entryMonth === monthKey();
 
   const save = (customer, status, keterangan, jumlah) => savePaymentRecord({ month: entryMonth, customer, status, keterangan, jumlah, penagihUid: uid });
@@ -826,7 +807,7 @@ function PenagihView({ profile, uid, customers, onLogout }) {
           </div>
         )}
         <div className="space-y-2">
-          {filtered.map((c) => <PayRow key={c.id} customer={c} existing={paidMap.get(c.id)} onSave={save} arrears={arrearsMap.get(c.id) || 0} />)}
+          {filtered.map((c) => <PayRow key={c.id} customer={c} existing={paidMap.get(c.id)} onSave={save} />)}
           {mine.length === 0 && <p className="text-xs text-gray-400 text-center py-10">Belum ada pelanggan yang ditugaskan ke Anda.</p>}
           {mine.length > 0 && filtered.length === 0 && <p className="text-xs text-gray-400 text-center py-10">Tidak ada pelanggan ditemukan.</p>}
         </div>
