@@ -319,9 +319,7 @@ function LoginScreen({ error }) {
     <div className="min-h-screen flex items-center justify-center p-6" style={{ background: CREAM }}>
       <div className="w-full max-w-sm">
         <div className="text-center mb-8">
-          <div className="w-14 h-14 rounded-2xl mx-auto mb-4 flex items-center justify-center" style={{ background: NAVY }}>
-            <ShieldCheck color="white" size={26} />
-          </div>
+          <img src="/logo.png" alt="PTS" className="w-20 h-20 mx-auto mb-3 object-contain" />
           <h1 className="text-2xl font-bold" style={{ color: NAVY, fontFamily: "'Sora', sans-serif" }}>Buku Tagihan</h1>
           <p className="text-sm text-gray-500 mt-1">Masuk dengan akun resmi Anda</p>
         </div>
@@ -628,11 +626,17 @@ function AdminView({ profile, customers, penagihList, onLogout }) {
 
   return (
     <div className="min-h-screen pb-6" style={{ background: CREAM }}>
-      <div className="px-5 pt-5 pb-4 sticky top-0 z-10" style={{ background: NAVY }}>
-        <div className="flex items-center justify-between">
-          <div>
-            <div className="text-white/60 text-xs">Panel Admin · {profile.nama}</div>
-            <div className="text-white font-bold text-lg" style={{ fontFamily: "'Sora', sans-serif" }}>Buku Tagihan</div>
+      <div className="px-5 pt-5 pb-4 sticky top-0 z-10 relative overflow-hidden" style={{ background: NAVY }}>
+        <img src="/logo-white.png" alt="" className="pointer-events-none select-none absolute -right-4 -top-6 w-32 h-32 object-contain opacity-20" />
+        <div className="flex items-center justify-between relative z-10">
+          <div className="flex items-center gap-2">
+            <div className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: "rgba(255,255,255,0.9)" }}>
+              <img src="/logo.png" alt="PTS" className="w-7 h-7 object-contain" />
+            </div>
+            <div>
+              <div className="text-white/60 text-xs">Panel Admin · {profile.nama}</div>
+              <div className="text-white font-bold text-lg" style={{ fontFamily: "'Sora', sans-serif" }}>Buku Tagihan</div>
+            </div>
           </div>
           <button onClick={onLogout} className="text-white/70"><LogOut size={18} /></button>
         </div>
@@ -1014,9 +1018,15 @@ function PenagihView({ profile, uid, customers, onLogout }) {
 
   return (
     <div className="min-h-screen pb-6" style={{ background: CREAM }}>
-      <div className="px-5 pt-5 pb-4 sticky top-0 z-10" style={{ background: NAVY }}>
-        <div className="flex items-center justify-between">
-          <div><div className="text-white/60 text-xs">Buku Tagihan</div><div className="text-white font-bold text-lg" style={{ fontFamily: "'Sora', sans-serif" }}>{profile.nama}</div></div>
+      <div className="px-5 pt-5 pb-4 sticky top-0 z-10 relative overflow-hidden" style={{ background: NAVY }}>
+        <img src="/logo-white.png" alt="" className="pointer-events-none select-none absolute -right-4 -top-8 w-36 h-36 object-contain opacity-20" />
+        <div className="flex items-center justify-between relative z-10">
+          <div className="flex items-center gap-2">
+            <div className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: "rgba(255,255,255,0.9)" }}>
+              <img src="/logo.png" alt="PTS" className="w-7 h-7 object-contain" />
+            </div>
+            <div><div className="text-white/60 text-xs">Buku Tagihan</div><div className="text-white font-bold text-lg" style={{ fontFamily: "'Sora', sans-serif" }}>{profile.nama}</div></div>
+          </div>
           <button onClick={onLogout} className="text-white/70"><LogOut size={18} /></button>
         </div>
         <select value={entryMonth} onChange={(e) => setEntryMonth(e.target.value)} className="w-full mt-3 border border-white/20 bg-white/10 text-white rounded-lg px-3 py-2 text-sm outline-none">
