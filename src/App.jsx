@@ -3,7 +3,7 @@ import { initializeApp } from "firebase/app";
 import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut } from "firebase/auth";
 import { getFirestore, collection, doc, getDoc, setDoc, addDoc, updateDoc, deleteDoc, onSnapshot, query, where, writeBatch } from "firebase/firestore";
 import { firebaseConfig } from "./firebaseConfig";
-import { Search, Plus, X, Users, Wallet, Ban, LogOut, Loader2, Lock, Mail, Pencil, History, ShieldCheck, Upload, Trash2, CheckCircle2, ChevronDown, ChevronUp } from "lucide-react";
+import { Search, Plus, X, Users, Wallet, Ban, LogOut, Loader2, Lock, Mail, Pencil, History, ShieldCheck, Upload, Trash2, CheckCircle2, ChevronDown, ChevronUp, MapPin, Navigation } from "lucide-react";
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -346,8 +346,24 @@ function LoginScreen({ error }) {
 
 // ---------- Form tambah/ubah pelanggan (khusus Admin) ----------
 function CustomerForm({ onSave, onCancel, onDelete, penagihList, initial }) {
-  const [form, setForm] = useState(initial || { nama: "", daerah: "", status: "aktif", penagihId: penagihList[0]?.uid || "", tunggakan: 0 });
+  const [form, setForm] = useState(initial || { nama: "", daerah: "", status: "aktif", penagihId: penagihList[0]?.uid || "", tunggakan: 0, lokasi: "" });
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [gpsStatus, setGpsStatus] = useState(""); // "", "loading", "error"
+
+  const grabLocation = () => {
+    if (!navigator.geolocation) { setGpsStatus("error"); return; }
+    setGpsStatus("loading");
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const { latitude, longitude } = pos.coords;
+        setForm((f) => ({ ...f, lokasi: `https://www.google.com/maps?q=${latitude},${longitude}` }));
+        setGpsStatus("");
+      },
+      () => setGpsStatus("error"),
+      { enableHighAccuracy: true, timeout: 12000 }
+    );
+  };
+
   return (
     <div className="fixed inset-0 z-20 flex items-end sm:items-center justify-center bg-black/30 p-0 sm:p-6">
       <div className="w-full sm:max-w-md bg-white rounded-t-2xl sm:rounded-2xl p-5 max-h-[90vh] overflow-y-auto">
@@ -360,6 +376,20 @@ function CustomerForm({ onSave, onCancel, onDelete, penagihList, initial }) {
             <input value={form.nama} onChange={(e) => setForm({ ...form, nama: e.target.value })} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm mt-1 outline-none focus:border-gray-400" /></div>
           <div><label className="text-xs text-gray-500">Daerah</label>
             <input value={form.daerah} onChange={(e) => setForm({ ...form, daerah: e.target.value })} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm mt-1 outline-none focus:border-gray-400" /></div>
+          <div>
+            <label className="text-xs text-gray-500">Lokasi rumah (opsional)</label>
+            <div className="flex gap-2 mt-1">
+              <input value={form.lokasi || ""} onChange={(e) => setForm({ ...form, lokasi: e.target.value })} placeholder="Tempel link Google Maps, atau pakai tombol GPS"
+                className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-gray-400" />
+              <button type="button" onClick={grabLocation} disabled={gpsStatus === "loading"}
+                className="px-3 rounded-lg flex items-center justify-center gap-1 text-xs font-semibold text-white disabled:opacity-50 flex-shrink-0" style={{ background: TEAL }}>
+                {gpsStatus === "loading" ? <Loader2 size={14} className="animate-spin" /> : <MapPin size={14} />}
+                GPS
+              </button>
+            </div>
+            {gpsStatus === "error" && <p className="text-xs mt-1" style={{ color: "#B0362A" }}>Gagal mengambil lokasi. Pastikan izin GPS diaktifkan, lalu coba lagi saat berada di lokasi rumah pelanggan.</p>}
+            {form.lokasi && <p className="text-xs mt-1 text-gray-400">📍 Lokasi tersimpan — <a href={form.lokasi} target="_blank" rel="noreferrer" className="underline" style={{ color: TEAL }} onClick={(e) => e.stopPropagation()}>lihat di peta</a></p>}
+          </div>
           <p className="text-xs text-gray-400 -mt-1">Jumlah tagihan tidak dipatok di sini — penagih akan mengetik jumlah yang benar-benar dibayar saat entri pembayaran tiap bulan.</p>
           <div><label className="text-xs text-gray-500">Penagih</label>
             <select value={form.penagihId} onChange={(e) => setForm({ ...form, penagihId: e.target.value })} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm mt-1 outline-none focus:border-gray-400">
@@ -729,18 +759,24 @@ function AdminView({ profile, customers, penagihList, onLogout }) {
                 const pay = paidMap.get(c.id);
                 const st = pay ? STATUS_LABEL[pay.status] : null;
                 return (
-                  <button key={c.id} onClick={() => { setEditing(c); setShowForm(true); }} className="w-full text-left rounded-xl bg-white border border-gray-100 p-3">
+                  <div key={c.id} onClick={() => { setEditing(c); setShowForm(true); }} className="w-full text-left rounded-xl bg-white border border-gray-100 p-3 cursor-pointer">
                     <div className="flex items-center justify-between">
                       <div>
                         <div className="text-sm font-medium flex items-center gap-1.5" style={{ color: INK }}>{c.nama} <Pencil size={11} color="#C4C9D2" /><TunggakanEditor customer={c} /></div>
                         <div className="text-xs text-gray-400">{c.daerah}{c.dendaBulanDepan && <span style={{ color: AMBER }}> · Dobel bulan depan</span>}</div>
                       </div>
                       <div className="flex flex-col items-end gap-1">
+                        {c.lokasi && (
+                          <button onClick={(e) => { e.stopPropagation(); window.open(c.lokasi, "_blank"); }}
+                            className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium" style={{ background: "#E6F4F1", color: TEAL }}>
+                            <MapPin size={12} /> Lokasi
+                          </button>
+                        )}
                         {c.status !== "aktif" && <Badge color={AMBER} bg="#FBEAE6">{c.status === "isolir" ? "Isolir" : "Off"}</Badge>}
                         {st && <Badge color={st.color} bg={st.bg}>{st.label}</Badge>}
                       </div>
                     </div>
-                  </button>
+                  </div>
                 );
               })}
               {filtered.length === 0 && <p className="text-xs text-gray-400 text-center py-6">Tidak ada pelanggan ditemukan.</p>}
@@ -925,6 +961,11 @@ function PayRow({ customer, existing, onSave }) {
           </div>
           <div className="flex flex-col items-end gap-1">
             <Badge color={st.color} bg={st.bg}>{st.label}</Badge>
+            {customer.lokasi && (
+              <button onClick={() => window.open(customer.lokasi, "_blank")} className="flex items-center gap-1 text-xs font-medium" style={{ color: TEAL }}>
+                <Navigation size={12} /> Lokasi
+              </button>
+            )}
             <button onClick={() => setEditingRow(true)} className="text-xs" style={{ color: NAVY }}>Ubah</button>
           </div>
         </div>
@@ -938,7 +979,14 @@ function PayRow({ customer, existing, onSave }) {
         {customer.nama} {customer.status !== "aktif" && <Badge color={AMBER} bg="#FBEAE6">{customer.status}</Badge>}
         <TunggakanEditor customer={customer} />
       </div>
-      <div className="text-xs text-gray-400 mb-2">{customer.daerah}{customer.dendaBulanDepan && <span style={{ color: "#B0362A" }}> · Minta dobel (tunggakan bulan lalu)</span>}</div>
+      <div className="text-xs text-gray-400 mb-2 flex items-center gap-2 flex-wrap">
+        <span>{customer.daerah}{customer.dendaBulanDepan && <span style={{ color: "#B0362A" }}> · Minta dobel (tunggakan bulan lalu)</span>}</span>
+        {customer.lokasi && (
+          <button onClick={() => window.open(customer.lokasi, "_blank")} className="flex items-center gap-1 text-xs font-medium" style={{ color: TEAL }}>
+            <Navigation size={12} /> Buka Lokasi
+          </button>
+        )}
+      </div>
       <select value={status} onChange={(e) => setStatus(e.target.value)} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm mb-2 outline-none">
         <option value="">Pilih status bayar...</option>
         <option value="cash">Lunas · Cash</option>
