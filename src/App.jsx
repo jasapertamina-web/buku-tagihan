@@ -3,7 +3,7 @@ import { initializeApp } from "firebase/app";
 import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut } from "firebase/auth";
 import { getFirestore, collection, doc, getDoc, setDoc, addDoc, updateDoc, deleteDoc, onSnapshot, query, where, writeBatch } from "firebase/firestore";
 import { firebaseConfig } from "./firebaseConfig";
-import { Search, Plus, X, Users, Wallet, Ban, LogOut, Loader2, Lock, Mail, Pencil, History, ShieldCheck, Upload, Trash2, CheckCircle2, ChevronDown, ChevronUp, MapPin, Navigation } from "lucide-react";
+import { Search, Plus, X, Users, Wallet, Ban, LogOut, Loader2, Lock, Mail, Pencil, History, ShieldCheck, Upload, Trash2, CheckCircle2, ChevronDown, ChevronUp, MapPin, Navigation, Phone, MessageCircle } from "lucide-react";
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -35,6 +35,13 @@ const lastMonths = (n = 6) => {
   return out;
 };
 const rupiah = (n) => "Rp" + Number(n || 0).toLocaleString("id-ID");
+// Ubah nomor telepon ke format link WhatsApp (wa.me butuh format internasional tanpa 0/+/spasi/strip di depan).
+const waLink = (telepon) => {
+  let digits = String(telepon || "").replace(/[^0-9]/g, "");
+  if (digits.startsWith("0")) digits = "62" + digits.slice(1);
+  else if (!digits.startsWith("62")) digits = "62" + digits;
+  return `https://wa.me/${digits}`;
+};
 
 const STATUS_LABEL = {
   cash: { label: "Lunas · Cash", color: TEAL, bg: "#E6F4F1" },
@@ -346,7 +353,7 @@ function LoginScreen({ error }) {
 
 // ---------- Form tambah/ubah pelanggan (khusus Admin) ----------
 function CustomerForm({ onSave, onCancel, onDelete, penagihList, initial }) {
-  const [form, setForm] = useState(initial || { nama: "", daerah: "", status: "aktif", penagihId: penagihList[0]?.uid || "", tunggakan: 0, lokasi: "" });
+  const [form, setForm] = useState(initial || { nama: "", daerah: "", telepon: "", status: "aktif", penagihId: penagihList[0]?.uid || "", tunggakan: 0, lokasi: "" });
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [gpsStatus, setGpsStatus] = useState(""); // "", "loading", "error"
 
@@ -376,6 +383,13 @@ function CustomerForm({ onSave, onCancel, onDelete, penagihList, initial }) {
             <input value={form.nama} onChange={(e) => setForm({ ...form, nama: e.target.value })} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm mt-1 outline-none focus:border-gray-400" /></div>
           <div><label className="text-xs text-gray-500">Daerah</label>
             <input value={form.daerah} onChange={(e) => setForm({ ...form, daerah: e.target.value })} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm mt-1 outline-none focus:border-gray-400" /></div>
+          <div><label className="text-xs text-gray-500">Nomor Telepon</label>
+            <div className="flex items-center gap-2 border border-gray-200 rounded-lg px-3 mt-1 focus-within:border-gray-400">
+              <Phone size={14} color="#9CA3AF" />
+              <input type="tel" inputMode="tel" value={form.telepon || ""} onChange={(e) => setForm({ ...form, telepon: e.target.value })}
+                placeholder="08xxxxxxxxxx" className="flex-1 py-2 text-sm outline-none" />
+            </div>
+          </div>
           <div>
             <label className="text-xs text-gray-500">Lokasi rumah (opsional)</label>
             <div className="flex gap-2 mt-1">
@@ -640,7 +654,7 @@ function AdminView({ profile, customers, penagihList, onLogout }) {
   }), [penagihList, customers, lunas, payments]);
 
   const filtered = customers
-    .filter((c) => (c.nama + c.daerah).toLowerCase().includes(query.toLowerCase()))
+    .filter((c) => (c.nama + c.daerah + (c.telepon || "")).toLowerCase().includes(query.toLowerCase()))
     .filter((c) => daerahFilter === "semua" || c.daerah === daerahFilter)
     .filter((c) => statusFilter === "semua" || c.status === statusFilter);
 
@@ -734,7 +748,7 @@ function AdminView({ profile, customers, penagihList, onLogout }) {
             <div className="flex gap-2 mb-3">
               <div className="flex-1 flex items-center gap-2 bg-white border border-gray-200 rounded-xl px-3">
                 <Search size={15} color="#9CA3AF" />
-                <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Cari nama / daerah" className="flex-1 py-2.5 text-sm outline-none" />
+                <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Cari nama / daerah / telepon" className="flex-1 py-2.5 text-sm outline-none" />
               </div>
               <button onClick={() => { setEditing(null); setShowForm(true); }} className="w-10 h-10 rounded-xl flex items-center justify-center text-white" style={{ background: TEAL }}><Plus size={18} /></button>
               <button onClick={() => setShowBulkImport(true)} className="w-10 h-10 rounded-xl flex items-center justify-center text-white" style={{ background: NAVY }} title="Import massal dari Excel"><Upload size={18} /></button>
@@ -764,8 +778,15 @@ function AdminView({ profile, customers, penagihList, onLogout }) {
                       <div>
                         <div className="text-sm font-medium flex items-center gap-1.5" style={{ color: INK }}>{c.nama} <Pencil size={11} color="#C4C9D2" /><TunggakanEditor customer={c} /></div>
                         <div className="text-xs text-gray-400">{c.daerah}{c.dendaBulanDepan && <span style={{ color: AMBER }}> · Dobel bulan depan</span>}</div>
+                        {c.telepon && <div className="text-xs text-gray-400 font-mono mt-0.5">{c.telepon}</div>}
                       </div>
                       <div className="flex flex-col items-end gap-1">
+                        {c.telepon && (
+                          <a href={waLink(c.telepon)} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}
+                            className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium" style={{ background: "#E6F4EA", color: "#1F8A4C" }}>
+                            <MessageCircle size={12} /> WA
+                          </a>
+                        )}
                         {c.lokasi && (
                           <button onClick={(e) => { e.stopPropagation(); window.open(c.lokasi, "_blank"); }}
                             className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium" style={{ background: "#E6F4F1", color: TEAL }}>
@@ -957,10 +978,16 @@ function PayRow({ customer, existing, onSave }) {
               {customer.nama}<TunggakanEditor customer={customer} />
             </div>
             <div className="text-xs text-gray-400">{customer.daerah}{existing.jumlah > 0 && <> · {rupiah(existing.jumlah)}</>}</div>
+            {customer.telepon && <div className="text-xs text-gray-400 font-mono mt-0.5">{customer.telepon}</div>}
             {existing.keterangan && <div className="text-xs text-gray-400 italic mt-1">"{existing.keterangan}"</div>}
           </div>
           <div className="flex flex-col items-end gap-1">
             <Badge color={st.color} bg={st.bg}>{st.label}</Badge>
+            {customer.telepon && (
+              <a href={waLink(customer.telepon)} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-xs font-medium" style={{ color: "#1F8A4C" }}>
+                <MessageCircle size={12} /> WA
+              </a>
+            )}
             {customer.lokasi && (
               <button onClick={() => window.open(customer.lokasi, "_blank")} className="flex items-center gap-1 text-xs font-medium" style={{ color: TEAL }}>
                 <Navigation size={12} /> Lokasi
@@ -981,6 +1008,11 @@ function PayRow({ customer, existing, onSave }) {
       </div>
       <div className="text-xs text-gray-400 mb-2 flex items-center gap-2 flex-wrap">
         <span>{customer.daerah}{customer.dendaBulanDepan && <span style={{ color: "#B0362A" }}> · Minta dobel (tunggakan bulan lalu)</span>}</span>
+        {customer.telepon && (
+          <a href={waLink(customer.telepon)} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-xs font-medium font-mono" style={{ color: "#1F8A4C" }}>
+            <MessageCircle size={12} /> {customer.telepon}
+          </a>
+        )}
         {customer.lokasi && (
           <button onClick={() => window.open(customer.lokasi, "_blank")} className="flex items-center gap-1 text-xs font-medium" style={{ color: TEAL }}>
             <Navigation size={12} /> Buka Lokasi
@@ -1029,7 +1061,7 @@ function PenagihView({ profile, uid, customers, onLogout }) {
   const daerahList = useMemo(() => [...new Set(mine.map((c) => c.daerah).filter(Boolean))].sort(), [mine]);
   const paidMap = new Map(payments.filter((p) => p.penagihId === uid).map((p) => [p.customerId, p]));
   const filtered = mine
-    .filter((c) => (c.nama + c.daerah).toLowerCase().includes(query.toLowerCase()))
+    .filter((c) => (c.nama + c.daerah + (c.telepon || "")).toLowerCase().includes(query.toLowerCase()))
     .filter((c) => daerahFilter === "semua" || c.daerah === daerahFilter)
     .filter((c) => {
       if (bayarFilter === "semua") return true;
@@ -1117,7 +1149,7 @@ function PenagihView({ profile, uid, customers, onLogout }) {
         )}
         <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-xl px-3 mb-3">
           <Search size={15} color="#9CA3AF" />
-          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Cari nama / daerah" className="flex-1 py-2.5 text-sm outline-none" />
+          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Cari nama / daerah / telepon" className="flex-1 py-2.5 text-sm outline-none" />
         </div>
         <div className="flex gap-2 mb-3 overflow-x-auto">
           {[
