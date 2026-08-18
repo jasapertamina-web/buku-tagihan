@@ -115,6 +115,10 @@ async function saveTunggakan(customerId, value) {
   await updateDoc(doc(db, "customers", customerId), { tunggakan: Math.max(0, Number(value) || 0) });
 }
 
+async function saveTelepon(customerId, value) {
+  await updateDoc(doc(db, "customers", customerId), { telepon: String(value || "").trim() });
+}
+
 async function savePaymentRecord({ month, customer, status, keterangan, jumlah, penagihUid, dobel }) {
   const payId = `${month}_${customer.id}`;
   const isDobel = status === "lunas_dobel" || !!dobel;
@@ -160,6 +164,48 @@ function TunggakanEditor({ customer }) {
       {current > 0
         ? <Badge color="#B0362A" bg="#FBEAE6">Nunggak {current}x · Ubah</Badge>
         : <span className="text-xs text-gray-300">Set tunggakan</span>}
+    </button>
+  );
+}
+
+// ---------- Editor Nomor Telepon (bisa diisi/diubah Admin & Penagih) ----------
+function TeleponEditor({ customer }) {
+  const [editing, setEditing] = useState(false);
+  const [val, setVal] = useState(customer.telepon || "");
+  const [err, setErr] = useState("");
+  const [saving, setSaving] = useState(false);
+  const current = customer.telepon || "";
+
+  const submit = async (e) => {
+    e.stopPropagation();
+    setSaving(true);
+    setErr("");
+    try {
+      await saveTelepon(customer.id, val);
+      setEditing(false);
+    } catch (e2) {
+      setErr(e2?.message || "Gagal menyimpan nomor telepon.");
+    }
+    setSaving(false);
+  };
+
+  if (editing) {
+    return (
+      <div onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center gap-1">
+          <input type="tel" inputMode="tel" value={val} onChange={(e) => setVal(e.target.value)} placeholder="08xxxxxxxxxx"
+            className="w-32 border border-gray-200 rounded-lg px-2 py-1 text-xs outline-none" autoFocus />
+          <button onClick={submit} disabled={saving} className="text-xs font-semibold px-2 py-1 rounded-lg text-white disabled:opacity-50" style={{ background: TEAL }}>{saving ? "..." : "OK"}</button>
+          <button onClick={(e) => { e.stopPropagation(); setVal(current); setEditing(false); setErr(""); }} className="text-xs text-gray-400 px-1">Batal</button>
+        </div>
+        {err && <p className="text-xs mt-1" style={{ color: "#B0362A" }}>{err}</p>}
+      </div>
+    );
+  }
+
+  return (
+    <button onClick={(e) => { e.stopPropagation(); setEditing(true); }} className="flex items-center gap-1 text-xs" style={{ color: current ? "#9CA3AF" : TEAL }}>
+      {current ? <>{current} <Pencil size={10} color="#C4C9D2" /></> : "+ Isi nomor telepon"}
     </button>
   );
 }
@@ -978,7 +1024,7 @@ function PayRow({ customer, existing, onSave }) {
               {customer.nama}<TunggakanEditor customer={customer} />
             </div>
             <div className="text-xs text-gray-400">{customer.daerah}{existing.jumlah > 0 && <> · {rupiah(existing.jumlah)}</>}</div>
-            {customer.telepon && <div className="text-xs text-gray-400 font-mono mt-0.5">{customer.telepon}</div>}
+            <div className="mt-0.5"><TeleponEditor customer={customer} /></div>
             {existing.keterangan && <div className="text-xs text-gray-400 italic mt-1">"{existing.keterangan}"</div>}
           </div>
           <div className="flex flex-col items-end gap-1">
@@ -1008,9 +1054,10 @@ function PayRow({ customer, existing, onSave }) {
       </div>
       <div className="text-xs text-gray-400 mb-2 flex items-center gap-2 flex-wrap">
         <span>{customer.daerah}{customer.dendaBulanDepan && <span style={{ color: "#B0362A" }}> · Minta dobel (tunggakan bulan lalu)</span>}</span>
+        <TeleponEditor customer={customer} />
         {customer.telepon && (
-          <a href={waLink(customer.telepon)} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-xs font-medium font-mono" style={{ color: "#1F8A4C" }}>
-            <MessageCircle size={12} /> {customer.telepon}
+          <a href={waLink(customer.telepon)} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-xs font-medium" style={{ color: "#1F8A4C" }}>
+            <MessageCircle size={12} /> WA
           </a>
         )}
         {customer.lokasi && (
