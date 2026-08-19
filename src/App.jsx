@@ -665,14 +665,15 @@ function AdminView({ profile, customers, penagihList, onLogout }) {
   const totalKurang = payments.filter((p) => p.status === "kurang").reduce((s, p) => s + p.jumlah, 0);
   const isolirCount = customersForMonth.filter((c) => c.status === "isolir" || c.status === "off").length;
   const aktifCount = customersForMonth.filter((c) => c.status === "aktif").length;
-  const belumBayar = customersForMonth.filter((c) => c.status === "aktif" && !paidMap.has(c.id));
+  const belumBayar = customersForMonth.filter((c) => c.status === "aktif" && !paidMap.has(c.id))
+    .sort((a, b) => a.nama.localeCompare(b.nama, "id", { sensitivity: "base" }));
   const belumBayarTanpaKet = customersForMonth.filter((c) => {
     if (c.status !== "aktif") return false;
     const pay = paidMap.get(c.id);
     if (!pay) return true; // belum ada catatan sama sekali
     const isBelum = pay.status === "belum" || pay.status === "belum_dobel";
     return isBelum && !(pay.keterangan && pay.keterangan.trim());
-  });
+  }).sort((a, b) => a.nama.localeCompare(b.nama, "id", { sensitivity: "base" }));
   const withCustomer = (p) => ({ ...p, customer: customers.find((c) => c.id === p.customerId) });
   const lunasList = useMemo(() => lunas.map(withCustomer), [lunas, customers]);
   const bayarKurangList = useMemo(() => payments.filter((p) => p.status === "kurang").map(withCustomer), [payments, customers]);
@@ -702,7 +703,8 @@ function AdminView({ profile, customers, penagihList, onLogout }) {
   const filtered = customers
     .filter((c) => (c.nama + c.daerah + (c.telepon || "")).toLowerCase().includes(query.toLowerCase()))
     .filter((c) => daerahFilter === "semua" || c.daerah === daerahFilter)
-    .filter((c) => statusFilter === "semua" || c.status === statusFilter);
+    .filter((c) => statusFilter === "semua" || c.status === statusFilter)
+    .sort((a, b) => a.nama.localeCompare(b.nama, "id", { sensitivity: "base" }));
 
   const saveCustomer = async (c) => {
     if (editing) await updateDoc(doc(db, "customers", editing.id), c);
@@ -1117,7 +1119,8 @@ function PenagihView({ profile, uid, customers, onLogout }) {
       if (bayarFilter === "dobel") return !!c.dendaBulanDepan;
       if (bayarFilter === "dobel_lunas") return paidMap.get(c.id)?.status === "lunas_dobel";
       return true;
-    });
+    })
+    .sort((a, b) => a.nama.localeCompare(b.nama, "id", { sensitivity: "base" }));
   const sudahBayarCount = mine.filter((c) => isLunasStatus(paidMap.get(c.id)?.status)).length;
   const sudahDicatat = sudahBayarCount;
   const mintaDobelCount = mine.filter((c) => c.dendaBulanDepan).length;
